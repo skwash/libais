@@ -62,7 +62,7 @@ enum AIS_FI {
   AIS_FI_8_200_23_RIS_EMMA_WARNING = 23,
   AIS_FI_8_200_24_RIS_WATERLEVEL = 24,
   AIS_FI_8_200_40_RIS_ATON_SIGNAL_STATUS = 40,
-  AIS_FI_8_200_55_RIS_PERSONS_ON_BOARD = 50,
+  AIS_FI_8_200_55_RIS_PERSONS_ON_BOARD = 55,
   AIS_FI_8_366_22_AREA_NOTICE = 22,  // USCG.
   AIS_FI_8_367_22_AREA_NOTICE = 22,  // USCG.
   AIS_FI_8_367_23_SSW = 23,  // USCG Satellite Ship Weather
@@ -1415,7 +1415,7 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
         DictSafeSetItem(rpt_dict, "spare", rpt->spare);
 
         PyObject *curr_list = PyList_New(3);
-        DictSafeSetItem(dict, "currents", curr_list);
+        DictSafeSetItem(rpt_dict, "currents", curr_list);
         for (size_t idx = 0; idx < 3; idx++) {
           PyObject *curr_dict = PyDict_New();
           DictSafeSetItem(curr_dict, "speed", rpt->currents[idx].speed);
@@ -1433,8 +1433,8 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
         DictSafeSetItem(rpt_dict, "type", rpt->type);
         DictSafeSetItem(rpt_dict, "spare", rpt->spare);
 
-        PyObject *curr_list = PyList_New(3);
-        DictSafeSetItem(dict, "currents", curr_list);
+        PyObject *curr_list = PyList_New(2);
+        DictSafeSetItem(rpt_dict, "currents", curr_list);
         for (size_t idx = 0; idx < 2; idx++) {
           // ERROR: no way to specify negative direction
           PyObject *curr_dict = PyDict_New();
@@ -1453,8 +1453,8 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
             reinterpret_cast<Ais8_1_26_HorzFlow *>(msg.reports[rpt_num]);
         DictSafeSetItem(rpt_dict, "spare", rpt->spare);
 
-        PyObject *curr_list = PyList_New(3);
-        DictSafeSetItem(dict, "currents", curr_list);
+        PyObject *curr_list = PyList_New(2);
+        DictSafeSetItem(rpt_dict, "currents", curr_list);
         for (size_t idx = 0; idx < 2; idx++) {
           PyObject *curr_dict = PyDict_New();
           PyList_SetItem(curr_list, idx, curr_dict);
@@ -1863,7 +1863,7 @@ ais8_200_55_append_pydict(const char *nmea_payload, PyObject *dict,
 
   PyObject *spare2_list = PyList_New(3);
   for (size_t i = 0; i < 3; i++)
-    PyList_SetItem(spare2_list, 0,  PyLong_FromLong(msg.spare2[i]));
+    PyList_SetItem(spare2_list, i, PyLong_FromLong(msg.spare2[i]));
   DictSafeSetItem(dict, "spare2", spare2_list);
   Py_DECREF(spare2_list);
 
