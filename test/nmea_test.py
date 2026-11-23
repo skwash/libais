@@ -1,9 +1,20 @@
 #!/usr/bin/env python
 """Tests for ais.nmea."""
 
+import time
 import unittest
 
 from ais import nmea
+
+# Catastrophic backtracking takes seconds or more for these inputs.  A linear
+# time regex takes microseconds.
+MAX_SECONDS = 0.1
+
+
+def _Seconds(func, arg):
+  start = time.perf_counter()
+  func(arg)
+  return time.perf_counter() - start
 
 
 class ChecksumTest(unittest.TestCase):
@@ -133,6 +144,33 @@ class LineTypeTest(unittest.TestCase):
         nmea.LineType(r'\s:rORBCOMM010,q:u,c:1421625633,T:2015-01-19 '
                       r'00.00.33*52\!AIVDM,1,1,,B,13aFh>?01H0KMUpNWGWc'
                       '1HLv0>@<,0*68'), nmea.TAGB)
+
+  def testTagVariants(self):
+    self.assertEqual(
+        nmea.LineType(r'\s:a,c:1425344187,*7E\b'), nmea.TAGB)
+    # The TAG block structure is valid, but tag_block does not know key x.
+    self.assertEqual(
+        nmea.LineType(r'\x:1*73\\s:a\!AIVDM,1,1,,B,'
+                      r'23?up2001gGRju>Ap:;R2APP08:c,0*0E'),
+        nmea.TAGB)
+
+  def testTagWithoutChecksum(self):
+    self.assertEqual(
+        nmea.LineType(r'\s:station1,c:1425344187\a'), nmea.TEXT)
+    self.assertEqual(
+        nmea.LineType(r'\s:station1,,c:1425344187*00\a'), nmea.TEXT)
+
+  def testTagNoCatastrophicBacktracking(self):
+    for count in range(24, 41, 4):
+      line = '\\' + 'a:' * count + '!'
+      self.assertEqual(nmea.LineType(line), nmea.TEXT)
+      self.assertLess(_Seconds(nmea.LineType, line), MAX_SECONDS, count)
+
+    for line in ('\\' + 'a:' * 10000 + '!',
+                 '\\' + 'a:,' * 10000 + '!',
+                 '\\s:' + 'x' * 10000 + '*0'):
+      self.assertEqual(nmea.LineType(line), nmea.TEXT)
+      self.assertLess(_Seconds(nmea.LineType, line), MAX_SECONDS)
 
 
 if __name__ == '__main__':

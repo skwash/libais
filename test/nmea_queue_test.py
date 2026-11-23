@@ -270,6 +270,17 @@ class NmeaQueueTest(unittest.TestCase):
         line_types,
         [nmea.USCG, nmea.BARE, nmea.TAGB, nmea.TEXT])
 
+  def testTagBlockWithUnknownKey(self):
+    # LineType finds a TAG block.  TagQueue does not know key x, so it passes
+    # the line through without a decode.
+    line = (r'\x:1*73\\s:a\!AIVDM,1,1,,B,'
+            r'23?up2001gGRju>Ap:;R2APP08:c,0*0E')
+    queue = nmea_queue.NmeaQueue()
+    queue.put(line)
+    msg = queue.GetOrNone()
+    self.assertEqual(
+        msg, {'line_nums': [1], 'lines': [line], 'line_type': nmea.TAGB})
+
 
 @pytest.mark.parametrize("nmea", [
     BARE_NMEA.strip(),

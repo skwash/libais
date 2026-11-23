@@ -25,22 +25,31 @@ from ais import vdm
 logger = logging.getLogger('libais')
 
 # Added a decimal value to time beyond the normal TAG BLOCK spec.
+#
+# This regex uses the same structure as nmea.ID_TAGB_RE, but it accepts only
+# the known keys.  No value can contain a star, a comma, or a backslash, and
+# each field must stop at a comma or at the star.  Thus, a line can match in
+# only one way.  This prevents catastrophic backtracking.
 TAG_BLOCK_RE = re.compile(r"""
-(\\
-(?P<metadata>(
-  (
-    c:(?P<time>\d{10,15}(\.\d*)?) |  # Receiver Unix time in seconds or millisec
-    d:(?P<dest>[^*,\\]{1,15}) |  # Destination
-    g:(?P<group>(?P<sentence_num>\d)-(?P<sentence_tot>\d)-(?P<group_id>\d+)) |
-    n:(?P<line_num>\d+) |  # Line count
-    q:(?P<quality>\w) |  # Orbcomm specific character code
-    r:(?P<rel_time>\d+) | # Relative time
-    s:(?P<rcvr>[^$*,!\\]{1,15}) |  # Source / station
-    t:(?P<text>[^$*,!\\]+) |  # Text string
-    T:(?P<text_date>[^$*,!\\]+)  # Orbcomm human readable date
-  )[,]?
-)+([*](?P<tag_checksum>[0-9A-Fa-f]{2}))?)
-\\)(?P<payload>.*)
+\\
+(?P<metadata>
+  (?:
+    (?:
+      c:(?P<time>\d{10,15}(?:\.\d*)?) |  # Receiver Unix time, sec or msec
+      d:(?P<dest>[^*,\\]{1,15}) |  # Destination
+      g:(?P<group>(?P<sentence_num>\d)-(?P<sentence_tot>\d)-(?P<group_id>\d+)) |
+      n:(?P<line_num>\d+) |  # Line count
+      q:(?P<quality>\w) |  # Orbcomm specific character code
+      r:(?P<rel_time>\d+) |  # Relative time
+      s:(?P<rcvr>[^$*,!\\]{1,15}) |  # Source / station
+      t:(?P<text>[^$*,!\\]+) |  # Text string
+      T:(?P<text_date>[^$*,!\\]+)  # Orbcomm human readable date
+    )
+    (?:,|(?=\*))
+  )+
+  \*(?P<tag_checksum>[0-9A-Fa-f]{2})
+)
+\\(?P<payload>.*)
 """, re.VERBOSE)
 
 NUMERIC_FIELDS = (
@@ -59,22 +68,26 @@ def Parse(data):
   """Unpack a TAG Block line or return None.
 
   Makes sure that the line matches the regex and the checksum matches.
+  The TAG block must be at the start of the line.
 
   Args:
     data: Line of text or a dict from at TAG_BLOCK_RE.
 
   Returns:
-    A NMEA TAG Block dict or None if the line would not parse or has
-    an invalid checksum.
+    A NMEA TAG Block dict or None if the line would not parse, has no
+    checksum, or has an invalid checksum.
   """
   if isinstance(data, str):
-    try:
-      result = TAG_BLOCK_RE.search(data).groupdict()
-    except AttributeError:
+    match = TAG_BLOCK_RE.match(data)
+    if not match:
       return
+    result = match.groupdict()
   elif isinstance(data, dict):
     result = data
   else:
+    return
+
+  if not result.get('metadata') or not result.get('tag_checksum'):
     return
 
   result.update({k: util.MaybeToNumber(v)
