@@ -273,6 +273,8 @@ class NmeaQueueTest(unittest.TestCase):
         [nmea.USCG, nmea.BARE, nmea.TAGB, nmea.TEXT])
 
 
+class NmeaQueueEmptySequenceIdTest(unittest.TestCase):
+
   def testBareEmptySequenceId(self):
     queue = nmea_queue.NmeaQueue()
     first, last = testutils.MultiPartLines(testutils.TWO_PART_BODIES, '', 'A')
@@ -291,6 +293,7 @@ class NmeaQueueTest(unittest.TestCase):
       msgs = list(src)
     self.assertEqual([msg['decoded']['mmsi'] for msg in msgs],
                      [testutils.TWO_PART_MMSI])
+
 
 @pytest.mark.parametrize("nmea", [
     BARE_NMEA.strip(),
