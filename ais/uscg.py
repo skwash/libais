@@ -37,6 +37,7 @@ Example two line message:
 
 """
 
+import collections
 import hashlib
 import logging
 import queue as Queue
@@ -102,19 +103,66 @@ def Parse(data):
 
 
 class UscgQueue(Queue.Queue):
-  """Treats NMEA without USCG station in metadata as from rUnknown."""
+  """Treats NMEA without USCG station in metadata as from rUnknown.
 
-  def __init__(self):
-    self.groups = {}
+  Incomplete multi-line messages are keyed on the station, the sequence id
+  and the channel.  The queue drops an incomplete message when a part comes
+  out of order, when it is not complete after max_age_lines more lines, or
+  when it is the oldest and a new message would make more than max_groups.
+
+  Attributes:
+    groups: collections.OrderedDict, Incomplete messages keyed on
+      (station, seq_id, chan), oldest first.  Each value is a tuple of the
+      lines_received count at the first part and the message dict.
+    lines_received: int, Number of lines given to put().
+    dropped: collections.Counter, Number of dropped lines and incomplete
+      messages for each reason: 'bad_part', 'broken_group' and
+      'overwritten' as in vdm.BareQueue, 'expired' for max_age_lines and
+      'over_limit' for max_groups.
+  """
+
+  def __init__(self, max_groups=1000, max_age_lines=10000):
+    """Create the queue.
+
+    Args:
+      max_groups: int, Maximum number of incomplete messages to keep.
+      max_age_lines: int, Number of lines after its first part that an
+        incomplete message can wait for its other parts.
+    """
+    self.groups = collections.OrderedDict()
+    self.max_groups = max_groups
+    self.max_age_lines = max_age_lines
+    self.lines_received = 0
+    self.dropped = collections.Counter()
     self.line_num = 0
     Queue.Queue.__init__(self)
     self.unknown_queue = vdm.BareQueue()
+
+  def _DropPart(self, problem, line_num, line, group_id=None):
+    """Drop a line that is not a valid part and the group that it breaks."""
+    logger.error('Bad part of a multi-line message (%s).  Dropping:\n  %d %s',
+                 problem, line_num, line)
+    self.dropped['bad_part'] += 1
+    if group_id is not None and self.groups.pop(group_id, None) is not None:
+      self.dropped['broken_group'] += 1
+
+  def _Expire(self):
+    """Drop incomplete messages that are too old."""
+    while self.groups:
+      group_id, (first_line, entry) = next(iter(self.groups.items()))
+      if self.lines_received - first_line <= self.max_age_lines:
+        return
+      logger.error('Incomplete message expired.  Dropped:\n  %s', entry)
+      self.dropped['expired'] += 1
+      del self.groups[group_id]
 
   def put(self, line, line_num=None):
     if line_num is not None:
       self.line_num = line_num
     else:
       self.line_num += 1
+    self.lines_received += 1
+    self._Expire()
 
     line = line.rstrip()
     metadata_match = Parse(line)
@@ -145,8 +193,13 @@ class UscgQueue(Queue.Queue):
       match['station'] = 'rUnknown'
 
     sentence_tot = int(match['sen_tot'])
+    sentence_num = int(match['sen_num'])
 
     if sentence_tot == 1:
+      problem = vdm.CheckNextPart(sentence_num, 1)
+      if problem:
+        self._DropPart(problem, self.line_num, line)
+        return
       body = match['body']
       fill_bits = int(match['fill_bits'])
       try:
@@ -165,29 +218,39 @@ class UscgQueue(Queue.Queue):
       return
 
     station = match['station'] or 'rUnknown'
-    sentence_num = int(match['sen_num'])
-    sequence_id = match['seq_id'] or ''
-    group_id = station + str(sequence_id)
+    group_id = (station, match['seq_id'], match['chan'])
+    _, entry = self.groups.get(group_id, (None, None))
+
+    if sentence_num == 1 or entry is None:
+      problem = vdm.CheckNextPart(sentence_num, sentence_tot)
+    else:
+      problem = vdm.CheckNextPart(sentence_num, sentence_tot,
+                                  len(entry['lines']),
+                                  int(entry['matches'][0]['sen_tot']))
+    if problem:
+      self._DropPart(problem, self.line_num, line, group_id)
+      return
+
     time = util.MaybeToNumber(match['time'])
 
-    if group_id not in self.groups:
-      self.groups[group_id] = []
-
-    if not self.groups[group_id]:
-      if sentence_num != 1:
-        # Drop a partial AIS message.
-        return
-
     if sentence_num == 1:
-      self.groups[group_id] = {
+      if entry is not None:
+        logger.error('Incomplete message overwritten by new start.  '
+                     'Dropped:\n  %s', entry)
+        self.dropped['overwritten'] += 1
+        del self.groups[group_id]
+      elif len(self.groups) >= self.max_groups:
+        _, (_, oldest) = self.groups.popitem(last=False)
+        logger.error('Too many incomplete messages.  Dropped:\n  %s', oldest)
+        self.dropped['over_limit'] += 1
+      self.groups[group_id] = (self.lines_received, {
           'line_nums': [self.line_num],
           'lines': [line],
           'matches': [match],
           'times': [time],
-      }
+      })
       return
 
-    entry = self.groups[group_id]
     entry['line_nums'].append(self.line_num)
     entry['lines'].append(line)
     entry['matches'].append(match)
@@ -197,6 +260,7 @@ class UscgQueue(Queue.Queue):
       # Found the middle part of a message.
       return
 
+    self.groups.pop(group_id)
     decoded = DecodeMultiple(entry)
 
     if decoded:
@@ -204,7 +268,6 @@ class UscgQueue(Queue.Queue):
     else:
       logger.info('Unable to process: %s', entry)
     Queue.Queue.put(self, entry)
-    self.groups.pop(group_id)
 
 
 def DecodeMultiple(message):
