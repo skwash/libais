@@ -27,7 +27,17 @@ USCG = 'USCG'
 # TODO(schwehr): Add ^ to the beginning of each?  Faster or slower?
 ID_BARE_RE = re.compile(r'[!$][A-Z]{4}[^*!$]*\*[0-9A-Fa-f]{2}$')
 ID_USCG_RE = re.compile(r'[!$][A-Z]{4}[^*!$]*\*[0-9A-Fa-f]{2},[^*!$]+$')
-ID_TAGB_RE = re.compile(r'\\([a-zA-Z]:[^*,\\]*[,]?)+\*[0-9A-Fa-f]{2}(\\.*)?$')
+
+# A TAG block starts with a backslash.  Comma separated "key:value" fields, a
+# star, and a two character checksum follow.  Then a backslash and the payload
+# can follow.  A value cannot contain a star, a comma, or a backslash.  Thus,
+# each field stops at a known character and a line can match in only one way.
+# This prevents catastrophic backtracking.  The regex accepts a trailing comma
+# before the star.  tag_block.TAG_BLOCK_RE accepts a subset of these lines.
+TAG_FIELD_RE_STR = r'[a-zA-Z]:[^*,\\]*'
+TAG_FIELDS_RE_STR = TAG_FIELD_RE_STR + '(?:,' + TAG_FIELD_RE_STR + ')*,?'
+ID_TAGB_RE = re.compile(
+    r'\\' + TAG_FIELDS_RE_STR + r'\*[0-9A-Fa-f]{2}(?:\\.*)?$')
 
 # Specific match for an AIS line.
 ID_BARE_VDM_RE = re.compile(r'[!$][A-Z]{2}VD[MO][^*!$]*\*[0-9A-Fa-f]{2}')

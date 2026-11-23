@@ -1,9 +1,15 @@
 #!/usr/bin/env python
 """Tests for ais.tag_block."""
 
+import time
 import unittest
 
+from ais import nmea
 from ais import tag_block
+
+# Catastrophic backtracking takes seconds or more for these inputs.  A linear
+# time regex takes microseconds.
+MAX_SECONDS = 0.1
 
 
 # Large sequence of single sentence AIS messages in TAG block format.
@@ -204,6 +210,60 @@ class TagBlockTest(TagTestCase):
     self.assertDictContainsSubset2(match, expected)
     self.assertDictContainsSubset2(tag_block.Parse(match), expected)
     self.assertDictContainsSubset2(tag_block.Parse(line), expected)
+
+  def testTrailingComma(self):
+    line = r'\s:a,c:1425344187,*7E\b'
+    expected = {
+        'metadata': 's:a,c:1425344187,*7E',
+        'payload': 'b',
+        'rcvr': 'a',
+        'tag_checksum': '7E',
+        'time': 1425344187}
+    self.assertDictContainsSubset2(tag_block.Parse(line), expected)
+
+  def testNoChecksum(self):
+    self.assertIsNone(
+        tag_block.Parse(r'\s:station1,c:1425344187\a'))
+    self.assertIsNone(
+        tag_block.Parse({'metadata': 's:station1', 'tag_checksum': None}))
+    self.assertIsNone(tag_block.Parse({'metadata': 's:station1'}))
+
+  def testBadChecksum(self):
+    self.assertIsNone(tag_block.Parse(r'\s:station1,c:1425344187*00\a'))
+
+  def testUnknownKey(self):
+    # Only a TAG block at the start of the line is a TAG block.
+    self.assertIsNone(
+        tag_block.Parse(r'\x:1*73\\s:a\!AIVDM,1,1,,B,'
+                        r'23?up2001gGRju>Ap:;R2APP08:c,0*0E'))
+    self.assertIsNone(tag_block.Parse(r'junk\s:station1,c:1425344187*78\a'))
+
+  def testFieldsNeedCommas(self):
+    self.assertIsNone(tag_block.Parse(r'\n:1s:abc*4C\b'))
+
+  def testParsedLinesAreTagBlockLines(self):
+    # TAG_BLOCK_RE must accept a subset of the lines that nmea.ID_TAGB_RE
+    # accepts.
+    lines = [line for line in SINGLE_LINE_MESSAGES.split('\n') if 'VD' in line]
+    for line in lines:
+      self.assertIsNotNone(tag_block.Parse(line), line)
+      self.assertEqual(nmea.LineType(line), nmea.TAGB, line)
+
+  def testNoCatastrophicBacktracking(self):
+    for count in range(24, 41, 4):
+      line = '\\' + 't:' * count + '!'
+      start = time.perf_counter()
+      self.assertIsNone(tag_block.Parse(line))
+      self.assertIsNone(tag_block.TAG_BLOCK_RE.search(line))
+      self.assertLess(time.perf_counter() - start, MAX_SECONDS, count)
+
+    for line in ('\\' + 't:' * 10000 + '!',
+                 '\\' + 't:a,' * 10000 + '!',
+                 '\\' + 'c:1234567890,' * 10000 + '!'):
+      start = time.perf_counter()
+      self.assertIsNone(tag_block.Parse(line))
+      self.assertIsNone(tag_block.TAG_BLOCK_RE.search(line))
+      self.assertLess(time.perf_counter() - start, MAX_SECONDS)
 
 
 class TagQueueTestSingleLines(TagTestCase):

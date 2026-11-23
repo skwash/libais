@@ -2,11 +2,33 @@
 
 import datetime
 import unittest
+from unittest import mock
 
 from ais import nmea_messages
 
 
-# TODO(schwehr): Test TimeUtc.
+class TimeUtcTest(unittest.TestCase):
+
+  def testTime(self):
+    fields = {'hours': '13', 'minutes': '48', 'seconds': '39.25'}
+    nmea_messages.TimeUtc(fields)
+    self.assertEqual(
+        fields,
+        {'hours': 13,
+         'microseconds': 250000,
+         'minutes': 48,
+         'seconds': 39,
+         'when': datetime.time(13, 48, 39, 250000)})
+
+  def testEmpty(self):
+    fields = {'hours': None, 'minutes': None, 'seconds': None}
+    nmea_messages.TimeUtc(fields)
+    self.assertIsNone(fields['when'])
+
+  def testOutOfRange(self):
+    fields = {'hours': '24', 'minutes': '00', 'seconds': '00.00'}
+    nmea_messages.TimeUtc(fields)
+    self.assertIsNone(fields['when'])
 
 
 class AbkTest(unittest.TestCase):
@@ -87,6 +109,27 @@ class AdsTest(unittest.TestCase):
          'when': datetime.time(13, 48, 39)})
 
 
+  def testEmptyTime(self):
+    line = '$AIADS,ID,,A,0,I,I*22'
+    message = nmea_messages.DecodeLine(line)
+    self.assertEqual(
+        message,
+        {'alarm': '',
+         'id': 'ID',
+         'message': 'ADS',
+         'pos_src': 'I',
+         'talker': 'AI',
+         'time_src': 'I',
+         'time_sync_method': 0,
+         'when': None})
+
+  def testTimeOutOfRange(self):
+    line = '$AIADS,ID,240000.00,A,0,I,I*0A'
+    message = nmea_messages.DecodeLine(line)
+    self.assertEqual(message['id'], 'ID')
+    self.assertIsNone(message['when'])
+
+
 class AlrTest(unittest.TestCase):
 
   def testRegex(self):
@@ -162,6 +205,22 @@ class AlrTest(unittest.TestCase):
          'talker': 'BS',
          'text': 'AIS: IEC Comm Error',
          'time': datetime.time(0, 0)})
+
+
+  def testEmptyTime(self):
+    line = '$AIALR,,001,V,V,AIS: UTC Lost*4D'
+    message = nmea_messages.DecodeLine(line)
+    self.assertEqual(
+        message,
+        {'ack_state': False,
+         'ack_state_raw': 'V',
+         'condition': False,
+         'condition_raw': 'V',
+         'id': '001',
+         'message': 'ALR',
+         'talker': 'AI',
+         'text': 'AIS: UTC Lost',
+         'time': None})
 
 
 class BbmTest(unittest.TestCase):
@@ -266,6 +325,24 @@ class FsrTest(unittest.TestCase):
          'time': datetime.time(0, 0, 4)})
 
 
+  def testEmptyTime(self):
+    line = '$AIFSR,ID,,A,561,3,41,369,3,-122,696*2D'
+    message = nmea_messages.DecodeLine(line)
+    self.assertEqual(
+        message,
+        {'chan': 'A',
+         'crc_fails': 41,
+         'id': 'ID',
+         'message': 'FSR',
+         'noise_db': -122,
+         'slots_above_noise': 696,
+         'slots_recv': 561,
+         'slots_reserved': 369,
+         'slots_reserved_self': 3,
+         'slots_self': 3,
+         'time': None})
+
+
 class GgaTest(unittest.TestCase):
 
   def testRegex(self):
@@ -318,6 +395,29 @@ class GgaTest(unittest.TestCase):
          'message': 'GGA',
          'satellites': 6,
          'time': datetime.time(17, 42, 46)})
+
+
+  def testNoFix(self):
+    # A GPS receiver without a fix sends the time but no position.
+    line = '$GPGGA,123519.00,,,,,0,00,,,M,,M,,*45'
+    message = nmea_messages.DecodeLine(line)
+    self.assertEqual(
+        message,
+        {'antenna_height_units': 'M',
+         'geoidal_height_units': 'M',
+         'gps_quality': 0,
+         'latitude': None,
+         'longitude': None,
+         'message': 'GGA',
+         'satellites': 0,
+         'time': datetime.time(12, 35, 19)})
+
+  def testEmptyTime(self):
+    line = '$GPGGA,,4916.45,N,12311.12,W,1,08,0.9,545.4,M,46.9,M,,*52'
+    message = nmea_messages.DecodeLine(line)
+    self.assertIsNone(message['time'])
+    self.assertAlmostEqual(message['latitude'], 49.274166666666666)
+    self.assertAlmostEqual(message['longitude'], -123.18533333333333)
 
 
 # TODO(schwehr): Recommended Minimum Specific GNSS Data (RMC).
@@ -408,6 +508,60 @@ class ZdaTest(unittest.TestCase):
          'talker': 'IN',
          'zone_hours': None,
          'zone_minutes': None})
+
+
+  def testMidnight(self):
+    line = '$GPZDA,000253.00,09,04,2015,00,00*69'
+    message = nmea_messages.DecodeLine(line)
+    self.assertEqual(message['datetime'],
+                     datetime.datetime(2015, 4, 9, 0, 2, 53))
+
+  def testAllEmpty(self):
+    line = '$GPZDA,,,,,,*48'
+    message = nmea_messages.DecodeLine(line)
+    self.assertEqual(
+        message,
+        {'message': 'ZDA',
+         'datetime': None,
+         'talker': 'GP',
+         'zone_hours': None,
+         'zone_minutes': None})
+
+  def testEmptyYear(self):
+    line = '$GPZDA,201638.00,02,03,,00,00*69'
+    message = nmea_messages.DecodeLine(line)
+    self.assertIsNone(message['datetime'])
+    self.assertEqual(message['zone_hours'], 0)
+
+  def testHour24(self):
+    line = '$GPZDA,240000.00,01,01,2020,00,00*60'
+    message = nmea_messages.DecodeLine(line)
+    self.assertIsNone(message['datetime'])
+
+  def testInvalidDate(self):
+    line = '$GPZDA,120000.00,30,02,2020,00,00*64'
+    message = nmea_messages.DecodeLine(line)
+    self.assertIsNone(message['datetime'])
+
+
+class HandlerNoMatchTest(unittest.TestCase):
+
+  def testGarbage(self):
+    for sentence, handler in nmea_messages.HANDLERS.items():
+      line = '$GP%s,garbage*00' % sentence
+      self.assertIsNone(handler(line), sentence)
+      self.assertIsNone(handler(''), sentence)
+      self.assertIsNone(nmea_messages.DecodeLine(line), sentence)
+
+  def testHandlerErrorIsLogged(self):
+    def BrokenHandler(unused_line):
+      raise TypeError('broken')
+
+    with mock.patch.dict(nmea_messages.HANDLERS, {'ZDA': BrokenHandler}):
+      with self.assertLogs('libais', level='WARNING') as logs:
+        message = nmea_messages.DecodeLine('$GPZDA,,,,,,*48')
+    self.assertIsNone(message)
+    self.assertIn('broken', logs.output[0])
 
 
 class NonNmeaTest(unittest.TestCase):
