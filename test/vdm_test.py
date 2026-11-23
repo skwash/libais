@@ -6,6 +6,8 @@ import unittest
 
 from ais import vdm
 
+from . import testutils
+
 
 class TestCase(unittest.TestCase):
 
@@ -491,6 +493,146 @@ class BareQueueTest(unittest.TestCase):
     line = '!AIVDM,1,1,,B,6B?n;be:cbapalgc;i6?Ow4,2*4A'
     self.queue.put(line)
     self.assertEqual(self.queue.qsize(), 0)
+
+
+class CheckNextPartTest(unittest.TestCase):
+
+  def testValidParts(self):
+    self.assertIsNone(vdm.CheckNextPart(1, 1))
+    self.assertIsNone(vdm.CheckNextPart(1, 3))
+    self.assertIsNone(vdm.CheckNextPart(2, 3, 1, 3))
+    self.assertIsNone(vdm.CheckNextPart(3, 3, 2, 3))
+
+  def testSentenceNumberOutOfRange(self):
+    self.assertIn('not in 1..3', vdm.CheckNextPart(0, 3))
+    self.assertIn('not in 1..3', vdm.CheckNextPart(4, 3, 3, 3))
+    self.assertIn('not in 1..0', vdm.CheckNextPart(1, 0))
+    self.assertIn('not in 1..1', vdm.CheckNextPart(2, 1))
+
+  def testSentenceTotalMismatch(self):
+    self.assertIn('does not match', vdm.CheckNextPart(2, 2, 1, 3))
+
+  def testOutOfOrder(self):
+    self.assertIn('expected sentence 1, got 2', vdm.CheckNextPart(2, 3))
+    self.assertIn('expected sentence 2, got 3', vdm.CheckNextPart(3, 3, 1, 3))
+    self.assertIn('expected sentence 3, got 2', vdm.CheckNextPart(2, 3, 2, 3))
+
+
+class BareQueueReassemblyTest(unittest.TestCase):
+
+  def setUp(self):
+    self.queue = vdm.BareQueue()
+
+  def PutAll(self, lines):
+    for line in lines:
+      self.queue.put(line)
+
+  def testDuplicateMiddlePartDropsGroup(self):
+    first, middle, last = testutils.MultiPartLines(
+        testutils.THREE_PART_BODIES, 4, 'A')
+    with self.assertLogs('libais', level='ERROR') as logs:
+      self.PutAll([first, middle] + [middle] * 100)
+    self.assertIn('expected sentence 3, got 2', logs.output[0])
+    self.assertEqual(self.queue.groups, {})
+    self.queue.put(last)
+    self.assertEqual(self.queue.qsize(), 0)
+    self.assertEqual(self.queue.groups, {})
+    self.assertEqual(self.queue.dropped['broken_group'], 1)
+    self.assertEqual(self.queue.dropped['bad_part'], 101)
+
+  def testMissingMiddlePartIsNotJoined(self):
+    first, _, last = testutils.MultiPartLines(
+        testutils.THREE_PART_BODIES, 4, 'A')
+    with self.assertLogs('libais', level='ERROR'):
+      self.PutAll([first, last])
+    self.assertEqual(self.queue.qsize(), 0)
+    self.assertEqual(self.queue.groups, {})
+
+  def testOutOfOrderPartsAreNotJoined(self):
+    first, middle, last = testutils.MultiPartLines(
+        testutils.THREE_PART_BODIES, 4, 'A')
+    with self.assertLogs('libais', level='ERROR'):
+      self.PutAll([first, last, middle])
+    self.assertEqual(self.queue.qsize(), 0)
+    self.assertEqual(self.queue.groups, {})
+
+  def testSentenceTotalMismatchDropsGroup(self):
+    first, _, _ = testutils.MultiPartLines(testutils.THREE_PART_BODIES, 4, 'A')
+    body, fill = testutils.THREE_PART_BODIES[1]
+    with self.assertLogs('libais', level='ERROR') as logs:
+      self.PutAll([first, testutils.VdmSentence(2, 2, 4, 'A', body, fill)])
+    self.assertIn('does not match', logs.output[0])
+    self.assertEqual(self.queue.qsize(), 0)
+    self.assertEqual(self.queue.groups, {})
+
+  def testSentenceNumberOutOfRange(self):
+    body, fill = testutils.TWO_PART_BODIES[1]
+    lines = [testutils.VdmSentence(tot, num, 3, 'B', body, fill)
+             for tot, num in ((2, 0), (2, 3), (0, 1), (1, 2))]
+    with self.assertLogs('libais', level='ERROR'):
+      self.PutAll(lines)
+    self.assertEqual(self.queue.qsize(), 0)
+    self.assertEqual(self.queue.groups, {})
+    self.assertEqual(self.queue.dropped['bad_part'], 4)
+
+  def testOrphanPartsLeaveNoGroup(self):
+    _, last = testutils.MultiPartLines(testutils.TWO_PART_BODIES, 2, 'A')
+    with self.assertLogs('libais', level='ERROR'):
+      self.PutAll([last] * 10)
+    self.assertEqual(self.queue.groups, {})
+
+  def testNewFirstPartRestartsGroup(self):
+    first, last = testutils.MultiPartLines(testutils.TWO_PART_BODIES, 2, 'A')
+    with self.assertLogs('libais', level='ERROR') as logs:
+      self.PutAll([first, first, last])
+    self.assertIn('overwritten', logs.output[0])
+    self.assertEqual(self.queue.qsize(), 1)
+    self.assertEqual(self.queue.get()['line_nums'], [2, 3])
+    self.assertEqual(self.queue.dropped['overwritten'], 1)
+
+  def testEmptySequenceId(self):
+    lines = testutils.MultiPartLines(testutils.TWO_PART_BODIES, '', 'A')
+    self.queue.put(lines[0])
+    self.assertEqual(list(self.queue.groups), [(None, 'A')])
+    self.queue.put(lines[1])
+    self.assertEqual(self.queue.qsize(), 1)
+    self.assertEqual(self.queue.get()['decoded']['mmsi'],
+                     testutils.TWO_PART_MMSI)
+    self.assertEqual(self.queue.groups, {})
+
+  def testDecodeErrorOnFinalPartClearsGroup(self):
+    bad_lines = testutils.MultiPartLines(
+        (('55NJPwP0', 0), ('0', 0)), 2, 'A')
+    with self.assertLogs('libais', level='ERROR') as logs:
+      self.PutAll(bad_lines)
+    self.assertIn('Unable to decode', logs.output[0])
+    self.assertEqual(self.queue.groups, {})
+
+    with self.assertNoLogs('libais', level='ERROR'):
+      self.PutAll(testutils.MultiPartLines(testutils.TWO_PART_BODIES, 2, 'A'))
+    self.assertEqual(self.queue.qsize(), 1)
+    self.assertEqual(self.queue.dropped['overwritten'], 0)
+
+  def testTwoChannelsWithTheSameSequenceId(self):
+    a_first, a_last = testutils.MultiPartLines(
+        testutils.TWO_PART_BODIES, 7, 'A')
+    b_first, b_last = testutils.MultiPartLines(
+        testutils.OTHER_TWO_PART_BODIES, 7, 'B')
+    with self.assertNoLogs('libais', level='ERROR'):
+      self.PutAll([a_first, b_first, a_last, b_last])
+    self.assertEqual(self.queue.qsize(), 2)
+    self.assertEqual(
+        [self.queue.get()['decoded']['mmsi'] for _ in range(2)],
+        [testutils.TWO_PART_MMSI, testutils.OTHER_TWO_PART_MMSI])
+    self.assertEqual(self.queue.groups, {})
+
+  def testSingleLineDoesNotChangeGroup(self):
+    first, last = testutils.MultiPartLines(testutils.TWO_PART_BODIES, '', 'A')
+    single = '!AIVDM,1,1,,A,14VIk0002sMM04vE>V9jGimn08RP,0*0D'
+    self.PutAll([first, single, last])
+    self.assertEqual(self.queue.qsize(), 2)
+    self.assertEqual(self.queue.get()['line_nums'], [2])
+    self.assertEqual(self.queue.get()['line_nums'], [1, 3])
 
 
 if __name__ == '__main__':

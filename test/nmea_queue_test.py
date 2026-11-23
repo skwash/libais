@@ -10,6 +10,8 @@ import ais
 from ais import nmea
 from ais import nmea_queue
 
+from . import testutils
+
 BARE_NMEA = """
 # pylint: disable=line-too-long
 $GPZDA,203003.00,12,07,2009,00,00,*47
@@ -269,6 +271,28 @@ class NmeaQueueTest(unittest.TestCase):
     self.assertEqual(
         line_types,
         [nmea.USCG, nmea.BARE, nmea.TAGB, nmea.TEXT])
+
+
+class NmeaQueueEmptySequenceIdTest(unittest.TestCase):
+
+  def testBareEmptySequenceId(self):
+    queue = nmea_queue.NmeaQueue()
+    first, last = testutils.MultiPartLines(testutils.TWO_PART_BODIES, '', 'A')
+    with self.assertLogs('libais', level='ERROR'):
+      for line in (last, first, last):
+        queue.put(line)
+    self.assertEqual(queue.qsize(), 1)
+    msg = queue.get()
+    self.assertEqual(msg['line_nums'], [2, 3])
+    self.assertEqual(msg['decoded']['mmsi'], testutils.TWO_PART_MMSI)
+
+  def testOpenWithBareEmptySequenceId(self):
+    lines = testutils.MultiPartLines(testutils.TWO_PART_BODIES, '', 'B')
+    text = '\n'.join([lines[1]] + lines)
+    with contextlib.closing(StringIO(text)) as f, ais.open(f) as src:
+      msgs = list(src)
+    self.assertEqual([msg['decoded']['mmsi'] for msg in msgs],
+                     [testutils.TWO_PART_MMSI])
 
 
 @pytest.mark.parametrize("nmea", [

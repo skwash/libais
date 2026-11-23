@@ -4,6 +4,8 @@ import unittest
 
 from ais import uscg
 
+from . import testutils
+
 
 METADATA_TYPES = r"""
 # pylint: disable=line-too-long
@@ -509,6 +511,151 @@ class UsgsQueueTest(unittest.TestCase):
                     'vdm': '!SAVDM,2,2,2,A,Dp888888880,2*08',
                     'vdm_type': 'VDM'}],
             'times': [1429278777, 1429278777]})
+
+
+def UscgLines(bodies, seq, chan, station='r003669945', time=1429287224):
+  return [line + f',{station},{time}'
+          for line in testutils.MultiPartLines(bodies, seq, chan)]
+
+
+class UscgQueueReassemblyTest(unittest.TestCase):
+
+  def setUp(self):
+    self.queue = uscg.UscgQueue()
+
+  def PutAll(self, lines):
+    for line in lines:
+      self.queue.put(line)
+
+  def testMultiLineMessage(self):
+    with self.assertNoLogs('libais', level='ERROR'):
+      self.PutAll(UscgLines(testutils.THREE_PART_BODIES, 4, 'A'))
+    self.assertEqual(self.queue.qsize(), 1)
+    msg = self.queue.get()
+    self.assertEqual(msg['line_nums'], [1, 2, 3])
+    self.assertEqual(msg['decoded']['id'], 8)
+    self.assertEqual(msg['times'], [1429287224] * 3)
+    self.assertEqual(len(self.queue.groups), 0)
+
+  def testDuplicateMiddlePartDoesNotGrow(self):
+    first, middle, last = UscgLines(testutils.THREE_PART_BODIES, 4, 'A')
+    with self.assertLogs('libais', level='ERROR'):
+      self.PutAll([first] + [middle] * 1000 + [last])
+    self.assertEqual(self.queue.qsize(), 0)
+    self.assertEqual(len(self.queue.groups), 0)
+    self.assertEqual(self.queue.dropped['broken_group'], 1)
+    self.assertEqual(self.queue.dropped['bad_part'], 1000)
+
+  def testMissingMiddlePartIsNotJoined(self):
+    first, _, last = UscgLines(testutils.THREE_PART_BODIES, 4, 'A')
+    with self.assertLogs('libais', level='ERROR'):
+      self.PutAll([first, last])
+    self.assertEqual(self.queue.qsize(), 0)
+    self.assertEqual(len(self.queue.groups), 0)
+
+  def testSentenceTotalMismatchDropsGroup(self):
+    first = UscgLines(testutils.THREE_PART_BODIES, 4, 'A')[0]
+    last = UscgLines(testutils.TWO_PART_BODIES, 4, 'A')[1]
+    with self.assertLogs('libais', level='ERROR') as logs:
+      self.PutAll([first, last])
+    self.assertIn('does not match', logs.output[0])
+    self.assertEqual(self.queue.qsize(), 0)
+    self.assertEqual(len(self.queue.groups), 0)
+
+  def testOrphanPartsLeaveNoGroup(self):
+    with self.assertLogs('libais', level='ERROR'):
+      for i in range(1000):
+        self.queue.put(
+            UscgLines(testutils.TWO_PART_BODIES, 2, 'A', station=f'r{i}')[1])
+    self.assertEqual(len(self.queue.groups), 0)
+
+  def testIncompleteGroupsHaveALimit(self):
+    with self.assertLogs('libais', level='ERROR'):
+      for i in range(5000):
+        self.queue.put(
+            UscgLines(testutils.TWO_PART_BODIES, 2, 'A', station=f'r{i}')[0])
+    self.assertEqual(len(self.queue.groups), 1000)
+    self.assertEqual(self.queue.dropped['over_limit'], 4000)
+
+    # The newest groups are kept and can complete.
+    self.queue.put(
+        UscgLines(testutils.TWO_PART_BODIES, 2, 'A', station='r4999')[1])
+    self.assertEqual(self.queue.qsize(), 1)
+    self.assertEqual(self.queue.get()['decoded']['mmsi'],
+                     testutils.TWO_PART_MMSI)
+
+  def testMaxGroups(self):
+    queue = uscg.UscgQueue(max_groups=10)
+    with self.assertLogs('libais', level='ERROR'):
+      for i in range(100):
+        queue.put(
+            UscgLines(testutils.TWO_PART_BODIES, 2, 'A', station=f'r{i}')[0])
+    self.assertEqual([key[0] for key in queue.groups],
+                     [f'r{i}' for i in range(90, 100)])
+
+  def testIncompleteGroupsExpire(self):
+    queue = uscg.UscgQueue(max_age_lines=5)
+    first, last = UscgLines(testutils.TWO_PART_BODIES, 2, 'A')
+    queue.put(first)
+    for _ in range(4):
+      queue.put('# text')
+    queue.put(last)
+    self.assertEqual(queue.qsize(), 5)
+    self.assertIn('decoded', list(queue.queue)[-1])
+
+    queue.put(first)
+    for _ in range(5):
+      queue.put('# text')
+    self.assertEqual(len(queue.groups), 1)
+    with self.assertLogs('libais', level='ERROR') as logs:
+      queue.put('# text')
+    self.assertIn('expired', logs.output[0])
+    self.assertEqual(len(queue.groups), 0)
+    self.assertEqual(queue.dropped['expired'], 1)
+
+  def testNewFirstPartRestartsGroup(self):
+    first, last = UscgLines(testutils.TWO_PART_BODIES, 2, 'A')
+    with self.assertLogs('libais', level='ERROR') as logs:
+      self.PutAll([first, first, last])
+    self.assertIn('overwritten', logs.output[0])
+    self.assertEqual(self.queue.qsize(), 1)
+    self.assertEqual(self.queue.get()['line_nums'], [2, 3])
+
+  def testEmptySequenceId(self):
+    with self.assertNoLogs('libais', level='ERROR'):
+      self.PutAll(UscgLines(testutils.TWO_PART_BODIES, '', 'B'))
+    self.assertEqual(self.queue.qsize(), 1)
+    self.assertEqual(self.queue.get()['decoded']['mmsi'],
+                     testutils.TWO_PART_MMSI)
+
+  def testSequenceIdZeroIsNotEmpty(self):
+    a_first, a_last = UscgLines(testutils.TWO_PART_BODIES, 0, 'A')
+    b_first, b_last = UscgLines(testutils.OTHER_TWO_PART_BODIES, '', 'A')
+    with self.assertNoLogs('libais', level='ERROR'):
+      self.PutAll([a_first, b_first, a_last, b_last])
+    self.assertEqual(self.queue.qsize(), 2)
+
+  def testTwoChannelsWithTheSameSequenceId(self):
+    a_first, a_last = UscgLines(testutils.TWO_PART_BODIES, 7, 'A')
+    b_first, b_last = UscgLines(testutils.OTHER_TWO_PART_BODIES, 7, 'B')
+    with self.assertNoLogs('libais', level='ERROR'):
+      self.PutAll([a_first, b_first, a_last, b_last])
+    self.assertEqual(
+        [self.queue.get()['decoded']['mmsi'] for _ in range(2)],
+        [testutils.TWO_PART_MMSI, testutils.OTHER_TWO_PART_MMSI])
+    self.assertEqual(len(self.queue.groups), 0)
+
+  def testTwoStationsWithTheSameSequenceId(self):
+    a_first, a_last = UscgLines(
+        testutils.TWO_PART_BODIES, 7, 'A', station='rA')
+    b_first, b_last = UscgLines(
+        testutils.OTHER_TWO_PART_BODIES, 7, 'A', station='rB')
+    with self.assertNoLogs('libais', level='ERROR'):
+      self.PutAll([a_first, b_first, a_last, b_last])
+    self.assertEqual(
+        [self.queue.get()['decoded']['mmsi'] for _ in range(2)],
+        [testutils.TWO_PART_MMSI, testutils.OTHER_TWO_PART_MMSI])
+
 
 if __name__ == '__main__':
   unittest.main()

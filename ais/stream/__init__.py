@@ -1,10 +1,12 @@
 # Based on ais_normalize.py from https://github.com/schwehr/noaadata
 
+import collections
 import sys
 import traceback
 import warnings
 
 import ais
+from ais import vdm
 from ais.stream import checksum
 
 warnings.warn(
@@ -77,6 +79,28 @@ class OnlyMessageEndError(StreamError):
 
   def __str__(self):
     return '%(description)s for %(bufferSlot)s:\n%(line)s\n' % self.kw
+
+
+class OutOfSequenceError(StreamError):
+  description = 'Part out of sequence'
+
+  def __str__(self):
+    return '%(description)s (%(problem)s) for %(bufferSlot)s: %(line_num)s: %(line)s' % self.kw
+
+
+class ExpiredMessageError(StreamError):
+  description = 'Incomplete message expired'
+
+  def __str__(self):
+    return '%(description)s for %(bufferSlot)s: %(line_num)s' % self.kw
+
+
+class TooManyIncompleteMessagesError(StreamError):
+  description = 'Too many incomplete messages'
+
+  def __str__(self):
+    return '%(description)s, dropped %(bufferSlot)s: %(line_num)s' % self.kw
+
 
 class UnfinishedMessagesError(StreamError):
   description = 'Unfinished messages at end of file'
@@ -156,15 +180,25 @@ def normalize(nmea=sys.stdin,
               allow_missing_timestamps=False,
               errorcb=ErrorPrinter,
               stats=None,
+              max_groups=1000,
+              max_age_lines=10000,
               **kw):
   """Assemble multi-line messages
+
+  The parts of a multi-line message must come in order with the same
+  sentence total.  A part that breaks these rules causes the incomplete
+  message to be dropped and reported.
 
   Args:
     nmea: iterator of lines to read
     window: number of seconds to allow the later parts of a multiline message to span
+    max_groups: maximum number of incomplete messages to keep
+    max_age_lines: number of input lines after its first part that an
+      incomplete message can wait for its other parts
   """
 
-  buffers = {} # Put partial messages in a queue by station so that they can be reassembled
+  # Partial messages by station, oldest first, so that they can be reassembled.
+  buffers = collections.OrderedDict()
   if stats is None: stats={}
   stats['line_num'] = stats.pop('line_num', 0)
   stats['error_num_total'] = stats.pop('error_num_total', 0)
@@ -179,6 +213,14 @@ def normalize(nmea=sys.stdin,
     assert False
 
   for idx, origline in enumerate(nmea):
+    while buffers:
+      oldSlot, oldParts = next(iter(buffers.items()))
+      if idx - oldParts[0]['index'] <= max_age_lines:
+        break
+      del buffers[oldSlot]
+      report_error(ExpiredMessageError(line_num=stats["line_num"],
+                                       bufferSlot=oldSlot, parts=oldParts))
+
     try:
       tagblock, line = parseTagBlock(origline)
 
@@ -204,12 +246,19 @@ def normalize(nmea=sys.stdin,
 
       # Total NMEA lines that compose this message [1..9].
       totNumSentences = int(fields[1])
+      sentenceNum = int(fields[2])  # Message sequence number 1..9 (packetNum)
       if 1 == totNumSentences:
+        problem = vdm.CheckNextPart(sentenceNum, 1)
+        if problem:
+          report_error(OutOfSequenceError(line_num=stats["line_num"],
+                                          line=line.strip(),
+                                          bufferSlot=None,
+                                          problem=problem))
+          continue
         # A single line needs no work, so pass it along.
         yield tagblock, line, origline
         continue
 
-      sentenceNum = int(fields[2])  # Message sequence number 1..9 (packetNum)
       payload = fields[5]  # AIS binary data encoded in whacky ways
       timestamp = fields[-1].strip()   # Seconds since Epoch UTC.  Always the last field
 
@@ -236,21 +285,43 @@ def normalize(nmea=sys.stdin,
       if not treat_ab_equal:
         bufferSlot += (fields[4],)  # channel id
 
+      parts = buffers.get(bufferSlot)
+      if sentenceNum == 1 or parts is None:
+        problem = vdm.CheckNextPart(sentenceNum, totNumSentences)
+      else:
+        problem = vdm.CheckNextPart(sentenceNum, totNumSentences,
+                                    len(parts), parts[0]['total'])
+      if problem:
+        if parts is None and 1 < sentenceNum <= totNumSentences:
+          report_error(OnlyMessageEndError(line=line, bufferSlot=bufferSlot))
+        else:
+          buffers.pop(bufferSlot, None)
+          report_error(OutOfSequenceError(line_num=stats["line_num"],
+                                          line=line.strip(),
+                                          bufferSlot=bufferSlot,
+                                          problem=problem))
+        continue
+
       newPacket = {"payload": payload,
                    "timestamp": timestamp,
                    "tagblock": tagblock,
-                   "origline": origline}
+                   "origline": origline,
+                   "index": idx,
+                   "total": totNumSentences}
       if sentenceNum == 1:
-        buffers[bufferSlot] = [newPacket]  # Overwrite any partials
+        if parts is not None:
+          del buffers[bufferSlot]  # Overwrite any partials
+        elif len(buffers) >= max_groups:
+          oldSlot, oldParts = buffers.popitem(last=False)
+          report_error(TooManyIncompleteMessagesError(line_num=stats["line_num"],
+                                                      bufferSlot=oldSlot,
+                                                      parts=oldParts))
+        buffers[bufferSlot] = [newPacket]
         continue
 
+      parts.append(newPacket)
       if totNumSentences == sentenceNum:
         # Finished a message
-        if bufferSlot not in buffers:
-          report_error(OnlyMessageEndError(line=line, bufferSlot=bufferSlot))
-          continue
-        buffers[bufferSlot].append(newPacket)
-        parts = buffers[bufferSlot]  # Now have all the pieces.
         del buffers[bufferSlot]  # Clear out the used packets to save memory.
 
         # Sanity check
@@ -309,15 +380,13 @@ def normalize(nmea=sys.stdin,
         yield tagblock, out_str, origstr
 
         continue
-
-      buffers[bufferSlot].append(newPacket)
     except TooManyErrorsError:
       raise
     except Exception as inst:
       report_error(inst)
 
   if buffers:
-    report_error(UnfinishedMessagesError(buffers=buffers))
+    report_error(UnfinishedMessagesError(buffers=dict(buffers)))
 
 
 def decode(nmea=sys.stdin,
