@@ -3,6 +3,7 @@
 
 import unittest
 
+from ais import nmea
 from ais import tag_block
 
 
@@ -300,6 +301,223 @@ class TagQueueGroupsTest(TagTestCase):
     queue.put(r'\g:2-2-13*5F\def')
     self.assertEqual(queue.qsize(), 0)
     self.assertEqual(len(queue.groups), 0)
+    self.assertEqual(queue.stats['orphan_lines'], 1)
+
+
+# Two different two-part type 5 messages.
+VDM_A = (
+    # pylint: disable=line-too-long
+    '!AIVDM,2,1,9,A,59NS9142>SW@7PQWR20u84pLF1=Dr2222222221SDHa?A0l;`CDhCU3lp888,0*5B',
+    '!AIVDM,2,2,9,A,88888888880,2*2D',
+)
+MMSI_A = 636012804
+VDM_B = (
+    # pylint: disable=line-too-long
+    '!SAVDM,2,1,7,B,59NSGLD2Cn5@CDLkN21Tu8dL5@F2222222222216EHMC=4w`0L@hEPC`8888,0*1A',
+    '!SAVDM,2,2,7,B,88888888880,2*3A',
+)
+MMSI_B = 636016497
+VDM_SINGLE = '!AIVDM,1,1,,A,181520h000JstMLHbOFc1CUd0<07,0*35'
+MMSI_SINGLE = 538001923
+
+
+def TagLine(metadata, payload):
+  """Make a TAG block line with a valid checksum."""
+  return '\\%s*%s\\%s' % (metadata, nmea.Checksum(metadata), payload)
+
+
+def Drain(queue):
+  msgs = []
+  while not queue.empty():
+    msgs.append(queue.get())
+  return msgs
+
+
+class TagQueueGroupSequenceTest(TagTestCase):
+
+  def testTwoPartGroupFormat(self):
+    lines = (TagLine('g:1-2-5,s:rA,c:1426032120', VDM_A[0]),
+             TagLine('g:2-2-5', VDM_A[1]))
+    queue = tag_block.TagQueue()
+    queue.put(lines[0])
+    queue.put(lines[1])
+    msgs = Drain(queue)
+    self.assertEqual(len(msgs), 1)
+    msg = msgs[0]
+    self.assertEqual(
+        set(msg), {'decoded', 'line_nums', 'lines', 'matches', 'times'})
+    self.assertEqual(msg['line_nums'], [1, 2])
+    self.assertEqual(msg['lines'], list(lines))
+    self.assertEqual(msg['times'], [1426032120, None])
+    self.assertEqual(msg['decoded']['mmsi'], MMSI_A)
+    self.assertEqual(len(queue.groups), 0)
+
+  def testOnePartGroupIsEmitted(self):
+    line = TagLine('g:1-1-5,s:rA,c:1428451252', VDM_SINGLE)
+    queue = tag_block.TagQueue()
+    queue.put(line)
+    msgs = Drain(queue)
+    self.assertEqual(len(msgs), 1)
+    self.assertEqual(msgs[0]['lines'], [line])
+    self.assertEqual(msgs[0]['line_nums'], [1])
+    self.assertEqual(msgs[0]['times'], [1428451252])
+    self.assertEqual(msgs[0]['decoded']['mmsi'], MMSI_SINGLE)
+    self.assertEqual(len(queue.groups), 0)
+
+  def testSameGroupIdFromTwoSources(self):
+    queue = tag_block.TagQueue()
+    queue.put(TagLine('g:1-2-5,s:rA', VDM_A[0]))
+    queue.put(TagLine('g:1-2-5,s:rB', VDM_B[0]))
+    queue.put(TagLine('g:2-2-5,s:rB', VDM_B[1]))
+    queue.put(TagLine('g:2-2-5,s:rA', VDM_A[1]))
+    msgs = Drain(queue)
+    self.assertEqual([msg['decoded']['mmsi'] for msg in msgs],
+                     [MMSI_B, MMSI_A])
+    self.assertEqual(msgs[0]['line_nums'], [2, 3])
+    self.assertEqual(msgs[1]['line_nums'], [1, 4])
+    self.assertEqual(len(queue.groups), 0)
+
+  def testPartWithoutSourceMatchesOnlyGroup(self):
+    queue = tag_block.TagQueue()
+    queue.put(TagLine('g:1-2-5,s:rA', VDM_A[0]))
+    queue.put(TagLine('g:1-2-6,s:rB', VDM_B[0]))
+    queue.put(TagLine('g:2-2-5', VDM_A[1]))
+    msgs = Drain(queue)
+    self.assertEqual(len(msgs), 1)
+    self.assertEqual(msgs[0]['decoded']['mmsi'], MMSI_A)
+    self.assertEqual(list(queue.groups), [('rB', 6)])
+
+  def testAmbiguousPartIsDropped(self):
+    queue = tag_block.TagQueue()
+    queue.put(TagLine('g:1-2-5,s:rA', VDM_A[0]))
+    queue.put(TagLine('g:1-2-5,s:rB', VDM_B[0]))
+    queue.put(TagLine('g:2-2-5', VDM_A[1]))
+    self.assertEqual(queue.qsize(), 0)
+    self.assertEqual(queue.stats['ambiguous_lines'], 1)
+    self.assertEqual(len(queue.groups), 2)
+
+  def testDuplicateMiddlePartDropsGroup(self):
+    queue = tag_block.TagQueue()
+    queue.put(TagLine('g:1-3-7,s:rA', VDM_A[0]))
+    for _ in range(100):
+      queue.put(TagLine('g:2-3-7', VDM_A[1]))
+      for entry in queue.groups.values():
+        self.assertLessEqual(len(entry['lines']), 2)
+    queue.put(TagLine('g:3-3-7', VDM_SINGLE))
+    self.assertEqual(queue.qsize(), 0)
+    self.assertEqual(len(queue.groups), 0)
+    self.assertEqual(queue.stats['out_of_sequence'], 1)
+    self.assertEqual(queue.stats['orphan_lines'], 99)
+
+  def testOutOfOrderPartDropsGroup(self):
+    queue = tag_block.TagQueue()
+    queue.put(TagLine('g:1-3-7,s:rA', VDM_A[0]))
+    queue.put(TagLine('g:3-3-7', VDM_SINGLE))
+    queue.put(TagLine('g:2-3-7', VDM_A[1]))
+    self.assertEqual(queue.qsize(), 0)
+    self.assertEqual(len(queue.groups), 0)
+    self.assertEqual(queue.stats['out_of_sequence'], 1)
+    self.assertEqual(queue.stats['orphan_lines'], 1)
+
+  def testSentenceNumAboveTotalDropsGroup(self):
+    queue = tag_block.TagQueue()
+    queue.put(TagLine('g:1-2-7,s:rA', VDM_A[0]))
+    queue.put(TagLine('g:3-2-7', VDM_A[1]))
+    self.assertEqual(queue.qsize(), 0)
+    self.assertEqual(len(queue.groups), 0)
+    self.assertEqual(queue.stats['out_of_sequence'], 1)
+
+  def testChangedTotalDropsGroup(self):
+    queue = tag_block.TagQueue()
+    queue.put(TagLine('g:1-2-7,s:rA', VDM_A[0]))
+    queue.put(TagLine('g:2-3-7', VDM_A[1]))
+    self.assertEqual(queue.qsize(), 0)
+    self.assertEqual(len(queue.groups), 0)
+    self.assertEqual(queue.stats['out_of_sequence'], 1)
+
+  def testNewFirstPartReplacesIncompleteGroup(self):
+    queue = tag_block.TagQueue()
+    queue.put(TagLine('g:1-2-7,s:rA', VDM_B[0]))
+    queue.put(TagLine('g:1-2-7,s:rA', VDM_A[0]))
+    queue.put(TagLine('g:2-2-7,s:rA', VDM_A[1]))
+    msgs = Drain(queue)
+    self.assertEqual(len(msgs), 1)
+    self.assertEqual(msgs[0]['line_nums'], [2, 3])
+    self.assertEqual(msgs[0]['decoded']['mmsi'], MMSI_A)
+    self.assertEqual(queue.stats['restarted'], 1)
+
+
+class TagQueueEvictionTest(TagTestCase):
+
+  def testPartWithinMaxAgeIsAccepted(self):
+    queue = tag_block.TagQueue(max_age_lines=3)
+    queue.put(TagLine('g:1-2-7,s:rA', VDM_A[0]))
+    queue.put('filler 1')
+    queue.put('filler 2')
+    queue.put(TagLine('g:2-2-7', VDM_A[1]))
+    msgs = Drain(queue)
+    self.assertEqual(len(msgs), 3)
+    self.assertEqual(msgs[2]['decoded']['mmsi'], MMSI_A)
+    self.assertEqual(queue.stats['evicted_by_age'], 0)
+
+  def testPartAfterMaxAgeIsDropped(self):
+    queue = tag_block.TagQueue(max_age_lines=3)
+    queue.put(TagLine('g:1-2-7,s:rA', VDM_A[0]))
+    for i in range(3):
+      queue.put('filler %d' % i)
+    self.assertEqual(len(queue.groups), 1)
+    queue.put(TagLine('g:2-2-7', VDM_A[1]))
+    self.assertEqual(queue.qsize(), 3)
+    self.assertEqual(len(queue.groups), 0)
+    self.assertEqual(queue.stats['evicted_by_age'], 1)
+    self.assertEqual(queue.stats['orphan_lines'], 1)
+
+  def testAgeIgnoresCallerLineNum(self):
+    queue = tag_block.TagQueue(max_age_lines=3)
+    queue.put(TagLine('g:1-2-7,s:rA', VDM_A[0]), line_num=1)
+    queue.put(TagLine('g:2-2-7', VDM_A[1]), line_num=1000000)
+    msgs = Drain(queue)
+    self.assertEqual(len(msgs), 1)
+    self.assertEqual(msgs[0]['line_nums'], [1, 1000000])
+
+  def testMaxAgeBoundsGroups(self):
+    queue = tag_block.TagQueue(max_age_lines=10, max_groups=None)
+    for group_id in range(1000):
+      queue.put(TagLine('g:1-2-%d,s:rA' % group_id, VDM_A[0]))
+      self.assertLessEqual(len(queue.groups), 11)
+    self.assertEqual(queue.stats['evicted_by_age'], 1000 - 11)
+    self.assertEqual(queue.stats['evicted_by_cap'], 0)
+
+  def testMaxGroupsDropsOldest(self):
+    queue = tag_block.TagQueue(max_age_lines=None, max_groups=5)
+    for group_id in range(1000):
+      queue.put(TagLine('g:1-2-%d,s:rA' % group_id, VDM_A[0]))
+      self.assertLessEqual(len(queue.groups), 5)
+    self.assertEqual(list(queue.groups),
+                     [('rA', group_id) for group_id in range(995, 1000)])
+    self.assertEqual(queue.stats['evicted_by_cap'], 995)
+    self.assertEqual(queue.stats['evicted_by_age'], 0)
+
+    queue.put(TagLine('g:2-2-999,s:rA', VDM_A[1]))
+    msgs = Drain(queue)
+    self.assertEqual(len(msgs), 1)
+    self.assertEqual(msgs[0]['decoded']['mmsi'], MMSI_A)
+
+  def testDefaultLimitsBoundGroups(self):
+    queue = tag_block.TagQueue()
+    for group_id in range(5000):
+      queue.put(TagLine('g:1-2-%d,s:rA' % group_id, VDM_A[0]))
+    self.assertLessEqual(len(queue.groups), queue.DEFAULT_MAX_GROUPS)
+    self.assertLessEqual(len(queue._keys_by_id), queue.DEFAULT_MAX_GROUPS)
+    self.assertLessEqual(len(queue._first_line_counts),
+                         queue.DEFAULT_MAX_GROUPS)
+
+  def testInvalidLimits(self):
+    for value in (0, -1, 1.5, '10'):
+      with self.assertRaises(ValueError):
+        tag_block.TagQueue(max_age_lines=value)
+      with self.assertRaises(ValueError):
+        tag_block.TagQueue(max_groups=value)
 
 
 class DecodeTagBlockTest(TagTestCase):
