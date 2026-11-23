@@ -50,14 +50,16 @@ message to assist with the process of looking for duplicate messages.
             'checksum': '7B'}]
   }
 
-TODO(schwehr): Make sure that multi-line messages are coming in on the
-               same channel.
+The parts of a multi-line message must come in order on the same channel
+with the same sequence id and the same sentence total.  A part that breaks
+these rules causes the queue to drop the incomplete message.
 
 See Also:
   http://catb.org/gpsd/AIVDM.html
   http://www.itu.int/rec/R-REC-M.1371/en
 """
 
+import collections
 import hashlib
 import logging
 import queue as Queue
@@ -86,6 +88,27 @@ VDM_RE_STR = r"""(?P<vdm>
 
 VDM_RE = re.compile(VDM_RE_STR, re.VERBOSE)
 NUMERIC_FIELDS = ('fill_bits', 'sen_num', 'sen_tot', 'seq_id')
+
+
+def CheckNextPart(sentence_num, sentence_tot, parts_so_far=0, group_tot=None):
+  """Check that a sentence can be the next part of a multi-part message.
+
+  Args:
+    sentence_num: int, Number of this sentence.  Starts from 1.
+    sentence_tot: int, Total number of sentences that this sentence gives.
+    parts_so_far: int, Number of parts that the group already holds.
+    group_tot: int or None, Sentence total of the first part in the group.
+
+  Returns:
+    None if the sentence is the next part, else a string with the reason.
+  """
+  if not 1 <= sentence_num <= sentence_tot:
+    return 'sentence number %d is not in 1..%d' % (sentence_num, sentence_tot)
+  if group_tot is not None and sentence_tot != group_tot:
+    return 'sentence total %d does not match %d' % (sentence_tot, group_tot)
+  if sentence_num != parts_so_far + 1:
+    return 'expected sentence %d, got %d' % (parts_so_far + 1, sentence_num)
+  return None
 
 
 def VdmLines(lines):
@@ -133,12 +156,35 @@ class BareQueue(Queue.Queue):
   messages are stored until a complete message is available.  The
   bodies of each part are joined with the fill_bit count from the final
   sentence are decoded and added to the queue.
+
+  Incomplete messages are keyed on the sequence id and the channel.  An
+  empty sequence id is a valid key.  Some receivers leave it out, and
+  tag_block.DecodeTagMultiple and uscg.DecodeMultiple give this queue lines
+  that are already grouped.  There are at most 11 sequence ids and 3 channel
+  values, so the number of incomplete messages has a limit.
+
+  Attributes:
+    groups: dict, Incomplete messages keyed on (seq_id, chan).
+    dropped: collections.Counter, Number of dropped lines and incomplete
+      messages for each reason: 'bad_part' for a line that is not the next
+      part of a message, 'broken_group' for an incomplete message that a bad
+      part stopped, and 'overwritten' for an incomplete message that a new
+      first part replaced.
   """
 
   def __init__(self):
     self.groups = {}
+    self.dropped = collections.Counter()
     self.line_num = 0
     Queue.Queue.__init__(self)
+
+  def _DropPart(self, problem, line_num, line, group_id=None):
+    """Drop a line that is not a valid part and the group that it breaks."""
+    logger.error('Bad part of a multi-line message (%s).  Dropping:\n  %d %s',
+                 problem, line_num, line)
+    self.dropped['bad_part'] += 1
+    if group_id is not None and self.groups.pop(group_id, None) is not None:
+      self.dropped['broken_group'] += 1
 
   def put(self, line, line_num=None):
     """Add a line of NMEA or raw text to the queue."""
@@ -166,7 +212,13 @@ class BareQueue(Queue.Queue):
       return
 
     sentence_total = int(match['sen_tot'])
+    sentence_num = int(match['sen_num'])
+
     if sentence_total == 1:
+      problem = CheckNextPart(sentence_num, 1)
+      if problem:
+        self._DropPart(problem, line_num, line)
+        return
       body = match['body']
       fill_bits = int(match['fill_bits'])
       try:
@@ -184,29 +236,29 @@ class BareQueue(Queue.Queue):
       })
       return
 
-    sentence_num = int(match['sen_num'])
-    group_id = int(match['seq_id'])
+    group_id = (match['seq_id'], match['chan'])
+    entry = self.groups.get(group_id)
+
+    if sentence_num == 1 or entry is None:
+      problem = CheckNextPart(sentence_num, sentence_total)
+    else:
+      problem = CheckNextPart(sentence_num, sentence_total,
+                              len(entry['lines']),
+                              int(entry['matches'][0]['sen_tot']))
+    if problem:
+      self._DropPart(problem, line_num, line, group_id)
+      return
 
     if sentence_num == 1:
-      if group_id in self.groups:
+      if entry is not None:
         logger.error('Incomplete message overwritten by new start.  '
-                      'Dropped:\n  %s', self.groups[group_id])
+                     'Dropped:\n  %s', entry)
+        self.dropped['overwritten'] += 1
       self.groups[group_id] = {
           'line_nums': [line_num],
           'lines': [line],
           'matches': [match]
       }
-      return
-
-    if group_id not in self.groups:
-      logger.error('Do not have the prior lines in group_id %d. '
-                    'Dropping: \n  %s', group_id, line)
-      return
-
-    entry = self.groups[group_id]
-    if len(entry['lines']) != sentence_num - 1:
-      logger.error('Out of sequence message.  Dropping: %d != %d \n %s',
-                    len(entry['lines']), sentence_num - 1, line)
       return
 
     entry['lines'].append(line)
@@ -217,6 +269,8 @@ class BareQueue(Queue.Queue):
       # Nothing more to do in the middle of a sequence of sentences.
       return
 
+    # Found the final message in a group.
+    self.groups.pop(group_id)
     body = ''.join([match['body'] for match in entry['matches']])
     fill_bits = int(entry['matches'][-1]['fill_bits'])
     try:
@@ -228,6 +282,4 @@ class BareQueue(Queue.Queue):
     decoded['md5'] = hashlib.md5(body.encode('utf-8')).hexdigest()
     entry['decoded'] = decoded
 
-    # Found the final message in a group.
     Queue.Queue.put(self, entry)
-    self.groups.pop(group_id)
