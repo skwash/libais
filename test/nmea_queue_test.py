@@ -281,6 +281,32 @@ class NmeaQueueTest(unittest.TestCase):
     self.assertEqual(
         msg, {'line_nums': [1], 'lines': [line], 'line_type': nmea.TAGB})
 
+  def testTagBlockGgaWithoutFix(self):
+    line = (r'\s:a,c:1425344187*52\$GPGGA,123519.00,,,,,0,00,,,M,,M,,*45')
+    queue = nmea_queue.NmeaQueue()
+    queue.put(line)
+    msg = queue.GetOrNone()
+    self.assertEqual(msg['decoded']['message'], 'GGA')
+    self.assertIsNone(msg['decoded']['latitude'])
+    self.assertEqual(msg['times'], [1425344187])
+
+
+def test_stream_continues_after_gga_without_fix():
+  # A GPS receiver without a fix sends GGA lines without a position.
+  lines = (
+      '!AIVDM,1,1,,B,23?up2001gGRju>Ap:;R2APP08:c,0*0E\n'
+      '$GPGGA,123519.00,,,,,0,00,,,M,,M,,*45\n'
+      '!BSVDM,1,1,,A,15Mj23`PB`o=Of>KjvnJg8PT0L2R,0*7E\n'
+  )
+  with contextlib.closing(StringIO(lines)) as f, ais.open(f) as src:
+    msgs = list(src)
+
+  assert len(msgs) == 3
+  assert msgs[0]['decoded']['id'] == 2
+  assert msgs[1]['decoded']['message'] == 'GGA'
+  assert msgs[1]['decoded']['longitude'] is None
+  assert msgs[2]['decoded']['id'] == 1
+
 
 @pytest.mark.parametrize("nmea", [
     BARE_NMEA.strip(),

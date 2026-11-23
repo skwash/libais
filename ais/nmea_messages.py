@@ -47,22 +47,66 @@ NMEA_SENTENCE_RE = re.compile(NMEA_SENTENCE_RE_STR)
 NMEA_CHECKSUM_RE = re.compile(NMEA_CHECKSUM_RE_STR)
 
 
-# TODO(schwehr): Rename TimeUtc.
-def TimeUtc(fields):
+def FloatSplit(value):
+  base = math.trunc(value)
+  fractional = value - base
+  return base, fractional
+
+
+def _TimeParts(fields):
+  """Convert the hours, minutes, and seconds regex groups to numbers.
+
+  Args:
+    fields: dict, Regex groups that include hours, minutes, and seconds.
+
+  Returns:
+    A tuple of hours, minutes, seconds, and microseconds, or None if the
+    time is empty.
+  """
+  if any(fields.get(key) in (None, '')
+         for key in ('hours', 'minutes', 'seconds')):
+    return
+
   seconds, fractional_seconds = FloatSplit(float(fields['seconds']))
   microseconds = int(math.floor(fractional_seconds * 1e6))
+  return int(fields['hours']), int(fields['minutes']), seconds, microseconds
 
-  fields['seconds'] = seconds
-  fields['microseconds'] = microseconds
-  fields['hours'] = util.MaybeToNumber(fields['hours'])
-  fields['minutes'] = util.MaybeToNumber(fields['minutes'])
 
-  when = datetime.time(
-      fields['hours'],
-      fields['minutes'],
-      seconds,
-      microseconds
-  )
+def _Time(fields):
+  """Make a datetime.time from the hours, minutes, and seconds regex groups.
+
+  Args:
+    fields: dict, Regex groups that include hours, minutes, and seconds.
+
+  Returns:
+    A datetime.time, or None if the time is empty or out of range.  For
+    example, some devices send 240000 at midnight.
+  """
+  parts = _TimeParts(fields)
+  if parts is None:
+    return
+
+  try:
+    return datetime.time(*parts)
+  except ValueError as error:
+    logger.info('Time out of range: %s: %s', fields.get('time_utc'), error)
+    return
+
+
+# TODO(schwehr): Rename TimeUtc.
+def TimeUtc(fields):
+  """Add the time of a message to its regex groups as 'when'.
+
+  Args:
+    fields: dict, Regex groups that include hours, minutes, and seconds.
+        This function changes the dict.  'when' is None if the time is empty
+        or out of range.
+  """
+  when = _Time(fields)
+  parts = _TimeParts(fields)
+  if parts is not None:
+    (fields['hours'], fields['minutes'], fields['seconds'],
+     fields['microseconds']) = parts
   fields['when'] = when
 
 
@@ -84,10 +128,10 @@ ABK_RE = re.compile(ABK_RE_STR)
 #   the line to their message.
 def HandleAbk(line):
   """Decode AIS Addressed and Binary Broadcast Acknowledgement (ABK)."""
-  try:
-    fields = ABK_RE.match(line).groupdict()
-  except TypeError:
+  match = ABK_RE.match(line)
+  if not match:
     return
+  fields = match.groupdict()
 
   result = {
       'message': 'ABK',
@@ -118,10 +162,10 @@ ADS_RE = re.compile(ADS_RE_STR)
 
 def HandleAds(line):
   """Decode Automatic Device Status (ADS)."""
-  try:
-    fields = ADS_RE.match(line).groupdict()
-  except TypeError:
+  match = ADS_RE.match(line)
+  if not match:
     return
+  fields = match.groupdict()
 
   TimeUtc(fields)
 
@@ -153,20 +197,12 @@ ALR_RE = re.compile(ALR_RE_STR)
 
 def HandleAlr(line):
   """Decode Set Alarm State (ALR)."""
-  try:
-    fields = ALR_RE.match(line).groupdict()
-  except TypeError:
+  match = ALR_RE.match(line)
+  if not match:
     return
+  fields = match.groupdict()
 
-  seconds, fractional_seconds = FloatSplit(float(fields['seconds']))
-  microseconds = int(math.floor(fractional_seconds * 1e6))
-
-  when = datetime.time(
-      int(fields['hours']),
-      int(fields['minutes']),
-      seconds,
-      microseconds
-  )
+  when = _Time(fields)
 
   result = {
       'ack_state_raw': fields['ack_state'],
@@ -203,10 +239,10 @@ BBM_RE = re.compile(BBM_RE_STR)
 
 def HandleBbm(line):
   """Decode Binary Broadcast Message (BBM) sentence."""
-  try:
-    fields = BBM_RE.match(line).groupdict()
-  except TypeError:
+  match = BBM_RE.match(line)
+  if not match:
     return
+  fields = match.groupdict()
 
   result = {
       'message': 'BBM',
@@ -241,20 +277,12 @@ FSR_RE = re.compile(FSR_RE_STR)
 
 
 def HandleFsr(line):
-  try:
-    fields = FSR_RE.match(line).groupdict()
-  except TypeError:
+  match = FSR_RE.match(line)
+  if not match:
     return
+  fields = match.groupdict()
 
-  seconds, fractional_seconds = FloatSplit(float(fields['seconds']))
-  microseconds = int(math.floor(fractional_seconds * 1e6))
-
-  when = datetime.time(
-      int(fields['hours']),
-      int(fields['minutes']),
-      seconds,
-      microseconds
-  )
+  when = _Time(fields)
 
   result = {
       'message': 'FSR',
@@ -293,29 +321,30 @@ GGA_RE_STR = (
 GGA_RE = re.compile(GGA_RE_STR)
 
 
-def HandleGga(line):
-  try:
-    fields = GGA_RE.match(line).groupdict()
-  except TypeError:
+def _Degrees(degrees, minutes, negative):
+  """Convert NMEA degrees and decimal minutes to decimal degrees.
+
+  Returns:
+    A float, or None if the position is empty.
+  """
+  if not degrees or not minutes:
     return
+  value = int(degrees) + float(minutes) / 60.0
+  return -value if negative else value
 
-  seconds, fractional_seconds = FloatSplit(float(fields['seconds']))
-  microseconds = int(math.floor(fractional_seconds * 1e6))
 
-  when = datetime.time(
-      int(fields['hours']),
-      int(fields['minutes']),
-      seconds,
-      microseconds
-  )
+def HandleGga(line):
+  match = GGA_RE.match(line)
+  if not match:
+    return
+  fields = match.groupdict()
 
-  x = int(fields['lon_deg']) + float(fields['lon_min']) / 60.0
-  if fields['longitude_hemisphere'] == 'W':
-    x = -x
+  when = _Time(fields)
 
-  y = int(fields['lat_deg']) + float(fields['lat_min']) / 60.0
-  if fields['latitude_hemisphere'] == 'S':
-    y = -y
+  x = _Degrees(fields['lon_deg'], fields['lon_min'],
+               fields['longitude_hemisphere'] == 'W')
+  y = _Degrees(fields['lat_deg'], fields['lat_min'],
+               fields['latitude_hemisphere'] == 'S')
 
   result = {
       'message': 'GGA',
@@ -358,10 +387,10 @@ def HandleTxt(line):
     A dictionary with the decoded fields or None if it cannot decode
     the message.
   """
-  try:
-    fields = TXT_RE.match(line).groupdict()
-  except TypeError:
+  match = TXT_RE.match(line)
+  if not match:
     return
+  fields = match.groupdict()
 
   result = {
       'message': 'TXT',
@@ -391,33 +420,25 @@ ZDA_RE_STR = (
 ZDA_RE = re.compile(ZDA_RE_STR)
 
 
-def FloatSplit(value):
-  base = math.trunc(value)
-  fractional = value - base
-  return base, fractional
-
-
 def HandleZda(line):
-  try:
-    fields = ZDA_RE.match(line).groupdict()
-  except TypeError:
+  match = ZDA_RE.match(line)
+  if not match:
     return
+  fields = match.groupdict()
 
   for field in ('year', 'month', 'day', 'hours', 'minutes', 'zone_hours',
                 'zone_minutes'):
     if fields[field] is not None and fields[field]:
       fields[field] = util.MaybeToNumber(fields[field])
 
-  seconds, fractional_seconds = FloatSplit(float(fields['seconds']))
-  microseconds = int(math.floor(fractional_seconds * 1e6))
-  when = datetime.datetime(
-      fields['year'],
-      fields['month'],
-      fields['day'],
-      fields['hours'],
-      fields['minutes'],
-      seconds,
-      microseconds)
+  when = None
+  time_parts = _TimeParts(fields)
+  date_parts = (fields['year'], fields['month'], fields['day'])
+  if time_parts is not None and None not in date_parts:
+    try:
+      when = datetime.datetime(*date_parts, *time_parts)
+    except ValueError as error:
+      logger.info('Date or time out of range: %s: %s', line, error)
 
   # TODO(schwehr): Convert this to Unix UTC seconds.
   return {
@@ -462,10 +483,12 @@ def DecodeLine(line):
     logger.info('skipping: %s', line)
     return
 
+  # Handlers return None for lines that they cannot decode.  This is a backstop
+  # so that a handler bug does not stop a stream of messages.
   try:
     message = HANDLERS[sentence](line)
-  except AttributeError:
-    logger.info('Unable to decode line with handle: %s', line)
+  except (AttributeError, TypeError, ValueError) as error:
+    logger.warning('Unable to decode line with handler: %s: %s', line, error)
     return
 
   return message
