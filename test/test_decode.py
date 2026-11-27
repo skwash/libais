@@ -94,6 +94,34 @@ class HandBuiltPayloadDecoders(unittest.TestCase):
     self.assertEqual(1, msg['lock_status'])
     self.assertEqual(0, msg['spare2'])
 
+  def testTidalWindow6_1_32ThreeWindows(self):
+    # IMO SN.1/Circ.289 Table 3.1 with three 88-bit windows.  361 bits.
+    msg = ais.decode(
+        '65MGukQGGcuD062usw<M2K`t37`N5`kgrt`9hHtD:g9J1VwTMhW8pQjT;HLBP', 5)
+    self.assertEqual(11, msg['utc_month'])
+    self.assertEqual(27, msg['utc_day'])
+    expected = [
+        (-70.125, 42.5, 6, 15, 8, 30, 45, 2.5),
+        (-70.25, 42.625, 10, 5, 11, 50, 180, 1.2),
+        (-70.375, 42.75, 14, 20, 16, 45, 270, 3.7),
+    ]
+    self.assertEqual(len(expected), len(msg['windows']))
+    for window, values in zip(msg['windows'], expected):
+      x, y, from_hour, from_min, to_hour, to_min, cur_dir, cur_speed = values
+      self.assertAlmostEqual(x, window['x'])
+      self.assertAlmostEqual(y, window['y'])
+      self.assertEqual(from_hour, window['from_utc_hour'])
+      self.assertEqual(from_min, window['from_utc_min'])
+      self.assertEqual(to_hour, window['to_utc_hour'])
+      self.assertEqual(to_min, window['to_utc_min'])
+      self.assertEqual(cur_dir, window['cur_dir'])
+      self.assertAlmostEqual(cur_speed, window['cur_speed'], places=5)
+
+  def testTidalWindow6_1_32Rejects350Bits(self):
+    self.assertRaisesRegex(
+        ais.DecodeError, 'AIS_ERR_BAD_BIT_COUNT', ais.decode,
+        '65MGukQGGcuD062usw<M2K`t37`N5`kgrt`9hHtD:e0kOj>pCTL@qB5d>9@', 4)
+
 
 if __name__=='__main__':
   unittest.main()

@@ -508,17 +508,21 @@ Ais6_1_32::Ais6_1_32(const char *nmea_payload, const size_t pad)
     return;
   }
 
-  // TODO(schwehr): might get messages with not all windows
-  if (num_bits != 350) {
+  // IMO SN.1/Circ.289 Table 3.1 gives up to three windows of 88 bits each.
+  // The table leaves out the To UTC fields of window 2 by error, so its
+  // stated total of 350 bits is 11 bits short of three full windows.
+  const int window_bits = num_bits - 97;
+  if (window_bits < 88 || window_bits > 3 * 88 || window_bits % 88) {
     status = AIS_ERR_BAD_BIT_COUNT;
     return;
   }
+  const size_t num_windows = window_bits / 88;
 
   bits.SeekTo(88);
   utc_month = bits.ToUnsignedInt(88, 4);
   utc_day = bits.ToUnsignedInt(92, 5);
 
-  for (size_t window_num = 0; window_num < 3; window_num++) {
+  for (size_t window_num = 0; window_num < num_windows; window_num++) {
     Ais6_1_32_Window w;
     const size_t start = 97 + 88*window_num;
     w.position = bits.ToAisPoint(start, 49);
