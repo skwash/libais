@@ -249,7 +249,9 @@ Ais8_1_17::Ais8_1_17(const char *nmea_payload, const size_t pad)
   const size_t num_targets = (num_bits - 56) / 120;
   const size_t extra_bits = (num_bits - 56) % 120;
 
-  if (extra_bits || num_targets > 4) {
+  // IMO SN.1/Circ.289 Table 6.1: Target 1 is mandatory. Targets 2-4 are
+  // optional.
+  if (extra_bits || num_targets < 1 || num_targets > 4) {
     status = AIS_ERR_BAD_BIT_COUNT;
     return;
   }
@@ -269,6 +271,7 @@ Ais8_1_17::Ais8_1_17(const char *nmea_payload, const size_t pad)
     target.cog = bits.ToUnsignedInt(start + 97, 9);
     target.timestamp = bits.ToUnsignedInt(start + 106, 6);
     target.sog = bits.ToUnsignedInt(start + 112, 8);
+    targets.push_back(target);
   }
 
   assert(bits.GetRemaining() == 0);

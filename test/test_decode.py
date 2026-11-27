@@ -47,6 +47,20 @@ class HandBuiltPayloadDecoders(unittest.TestCase):
     self.assertEqual(1234, msg['msg_seq'])
     self.assertEqual(0, msg['spare2'])
 
+  def testVtsTargets8_1_17(self):
+    # IMO SN.1/Circ.289 Tables 6.1 and 6.2.
+    msg = ais.decode('803OtPh0DIL@?7;?@2K`t=wGU1se38d48?7;<2Hq:>0gN4d77P', 4)
+    self.assertEqual(
+        [{'type': 2, 'id': 'WDC1234', 'spare': 0, 'x': -70.25, 'y': 42.5,
+          'cog': 123, 'timestamp': 45, 'sog': 12},
+         {'type': 2, 'id': 'KABC123', 'spare': 0, 'x': -69.5, 'y': 41.75,
+          'cog': 300, 'timestamp': 7, 'sog': 30}],
+        msg['targets'])
+
+  def testVtsTargets8_1_17NoTargets(self):
+    self.assertRaisesRegex(ais.DecodeError, 'AIS_ERR_BAD_BIT_COUNT',
+                           ais.decode, '803OtPh0D@', 4)
+
 
 if __name__=='__main__':
   unittest.main()

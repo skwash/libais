@@ -112,5 +112,40 @@ TEST(Ais8_1_0Test, SpareAfterText) {
   EXPECT_EQ(0, msg->spare2);
 }
 
+// IMO SN.1/Circ.289 Table 6.1 and 6.2: VTS-generated/synthetic targets.
+TEST(Ais8_1_17Test, TwoTargets) {
+  // Built by hand.  Each field has a distinct value.
+  std::unique_ptr<Ais8_1_17> msg(new Ais8_1_17(
+      "803OtPh0DIL@?7;?@2K`t=wGU1se38d48?7;<2Hq:>0gN4d77P", 4));
+
+  ValidateAis8(msg.get(), 0, 3669123, 0, 1, 17);
+  ASSERT_EQ(2, msg->targets.size());
+
+  EXPECT_EQ(2, msg->targets[0].type);
+  EXPECT_EQ("WDC1234", msg->targets[0].id);
+  EXPECT_EQ(0, msg->targets[0].spare);
+  EXPECT_DOUBLE_EQ(-70.25, msg->targets[0].position.lng_deg);
+  EXPECT_DOUBLE_EQ(42.5, msg->targets[0].position.lat_deg);
+  EXPECT_EQ(123, msg->targets[0].cog);
+  EXPECT_EQ(45, msg->targets[0].timestamp);
+  EXPECT_EQ(12, msg->targets[0].sog);
+
+  EXPECT_EQ(2, msg->targets[1].type);
+  EXPECT_EQ("KABC123", msg->targets[1].id);
+  EXPECT_EQ(0, msg->targets[1].spare);
+  EXPECT_DOUBLE_EQ(-69.5, msg->targets[1].position.lng_deg);
+  EXPECT_DOUBLE_EQ(41.75, msg->targets[1].position.lat_deg);
+  EXPECT_EQ(300, msg->targets[1].cog);
+  EXPECT_EQ(7, msg->targets[1].timestamp);
+  EXPECT_EQ(30, msg->targets[1].sog);
+}
+
+TEST(Ais8_1_17Test, NoTargets) {
+  // Target 1 is mandatory.  The header alone is 56 bits.
+  std::unique_ptr<Ais8_1_17> msg(new Ais8_1_17("803OtPh0D@", 4));
+  EXPECT_TRUE(msg->had_error());
+  EXPECT_EQ(AIS_ERR_BAD_BIT_COUNT, msg->get_error());
+}
+
 }  // namespace
 }  // namespace libais
