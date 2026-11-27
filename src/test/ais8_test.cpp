@@ -99,5 +99,18 @@ TEST(Ais8_1_11Test, IncorrectBitCount) {
   EXPECT_TRUE(msg->had_error());
 }
 
+// ITU-R M.1371-4 Annex 5 Table 25: text telegram with a 2-bit spare.
+TEST(Ais8_1_0Test, SpareAfterText) {
+  // Built by hand.  Each field has a distinct value.
+  std::unique_ptr<Ais8_1_0> msg(new Ais8_1_0("85M:Ih00@<lfH2kSm4h", 2));
+
+  ValidateAis8(msg.get(), 0, 366123456, 0, 1, 0);
+  EXPECT_TRUE(msg->ack_required);
+  EXPECT_EQ(1234, msg->msg_seq);
+  EXPECT_EQ("9 KNOTS", msg->text);
+  // The first 2 bits of the text are 11.  The spare after the text is 00.
+  EXPECT_EQ(0, msg->spare2);
+}
+
 }  // namespace
 }  // namespace libais

@@ -36,5 +36,17 @@ class Ais6Decoders(unittest.TestCase):
     self.assertRaisesRegex(ais.DecodeError, '6:669:11',
                            ais.decode, '6B?n;be:cbapalgc;i6?Ow4', 2)
 
+
+class HandBuiltPayloadDecoders(unittest.TestCase):
+  """Hand-built payloads where each field has a distinct value."""
+
+  def testText8_1_0SpareAfterText(self):
+    # ITU-R M.1371-4 Annex 5 Table 25.  The first 2 bits of the text are 11.
+    msg = ais.decode('85M:Ih00@<lfH2kSm4h', 2)
+    self.assertEqual('9 KNOTS', msg['text'])
+    self.assertEqual(1234, msg['msg_seq'])
+    self.assertEqual(0, msg['spare2'])
+
+
 if __name__=='__main__':
   unittest.main()

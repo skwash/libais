@@ -51,16 +51,15 @@ Ais8_1_0::Ais8_1_0(const char *nmea_payload, const size_t pad)
   ack_required = bits[56];
   msg_seq = bits.ToUnsignedInt(57, 11);
 
+  // ITU-R M.1371-4 Annex 5 Table 25, Note 1: a 6-bit spare decodes as '@'.
   const size_t text_size = 6 * ((num_bits - 68)/6);
-  // wrong?  needs to land on 8-bit boundary
   const size_t spare2_size = num_bits - 68 - text_size;
   text = bits.ToString(68, text_size);
 
-  // TODO(schwehr): Is this correct?
   if (!spare2_size)
     spare2 = 0;
   else
-    spare2 = bits.ToUnsignedInt(68, spare2_size);
+    spare2 = bits.ToUnsignedInt(68 + text_size, spare2_size);
 
   assert(bits.GetRemaining() == 0);
   status = AIS_OK;
