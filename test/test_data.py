@@ -268,7 +268,7 @@ top_level = [
              'wind_ave': 12,
              'wind_dir': 113,
              'wind_gust': 16,
-             'wind_gust_dir': 16,
+             'wind_gust_dir': 109,
              'x': 126.58676666666666,
              'y': 37.43836666666667}
   },
