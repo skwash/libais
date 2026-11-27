@@ -374,15 +374,15 @@ Ais8_1_21::Ais8_1_21(const char *nmea_payload, const size_t pad)
     swell_period = bits.ToUnsignedInt(351, 6);  // s
     spare2 = bits.ToUnsignedInt(357, 3);
   } else {
-    // Type 1: WMO OBS from ship.
+    // Type 1: WMO OBS from ship.  IMO SN.1/Circ.289 Table 10.2.
     double const x = (bits.ToUnsignedInt(57, 16) / 100.0) - 180;
-    double const y = (bits.ToUnsignedInt(73, 15) / 100.0) - 180;
+    double const y = (bits.ToUnsignedInt(73, 15) / 100.0) - 90;
     position = AisPoint(x, y);
 
     utc_month = bits.ToUnsignedInt(88, 4);
     utc_day = bits.ToUnsignedInt(92, 6);
     utc_hour = bits.ToUnsignedInt(98, 5);
-    utc_min = bits.ToUnsignedInt(102, 3) * 10;
+    utc_min = bits.ToUnsignedInt(103, 3) * 10;
     cog = bits.ToUnsignedInt(106, 7) * 5;
     sog = bits.ToUnsignedInt(113, 5) * 0.5;
     heading = bits.ToUnsignedInt(118, 7) *5;  // Assume this is true degrees????

@@ -61,6 +61,20 @@ class HandBuiltPayloadDecoders(unittest.TestCase):
     self.assertRaisesRegex(ais.DecodeError, 'AIS_ERR_BAD_BIT_COUNT',
                            ais.decode, '803OtPh0D@', 4)
 
+  def testWmoWeather8_1_21(self):
+    # IMO SN.1/Circ.289 Table 10.2.
+    msg = ais.decode(
+        '85MA;ih0EIES<rVnnhTTW6j0kFRapI8FD0CIHD?C7QGp8BQi6lS9;368U<QR', 0)
+    self.assertAlmostEqual(-70.5, msg['x'])
+    self.assertAlmostEqual(42.25, msg['y'])
+    self.assertEqual(11, msg['utc_month'])
+    self.assertEqual(27, msg['utc_day'])
+    self.assertEqual(13, msg['utc_hour'])
+    self.assertEqual(40, msg['utc_min'])
+    self.assertEqual(90, msg['cog'])
+    self.assertEqual(95, msg['heading'])
+    self.assertEqual(90, msg['bearing_ice_edge'])
+
 
 if __name__=='__main__':
   unittest.main()

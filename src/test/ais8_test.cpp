@@ -147,5 +147,62 @@ TEST(Ais8_1_17Test, NoTargets) {
   EXPECT_EQ(AIS_ERR_BAD_BIT_COUNT, msg->get_error());
 }
 
+// IMO SN.1/Circ.289 Table 10.2: WMO weather observation report from ship.
+TEST(Ais8_1_21Test, WmoObservation) {
+  // Built by hand.  Each field has a distinct value.
+  std::unique_ptr<Ais8_1_21> msg(new Ais8_1_21(
+      "85MA;ih0EIES<rVnnhTTW6j0kFRapI8FD0CIHD?C7QGp8BQi6lS9;368U<QR", 0));
+
+  ValidateAis8(msg.get(), 0, 366234567, 0, 1, 21);
+  EXPECT_EQ(1, msg->type_wx_report);
+  EXPECT_DOUBLE_EQ(-70.5, msg->position.lng_deg);
+  EXPECT_DOUBLE_EQ(42.25, msg->position.lat_deg);
+  EXPECT_EQ(11, msg->utc_month);
+  EXPECT_EQ(27, msg->utc_day);
+  EXPECT_EQ(13, msg->utc_hour);
+  EXPECT_EQ(40, msg->utc_min);
+  EXPECT_EQ(90, msg->cog);
+  EXPECT_FLOAT_EQ(4.5, msg->sog);
+  EXPECT_EQ(95, msg->heading);
+  EXPECT_FLOAT_EQ(1013.2, msg->pressure);
+  EXPECT_FLOAT_EQ(1.5, msg->rel_pressure);
+  EXPECT_EQ(3, msg->pressure_tendency);
+  EXPECT_EQ(225, msg->wind_dir);
+  EXPECT_FLOAT_EQ(10.5, msg->wind_speed_ms);
+  EXPECT_EQ(150, msg->wind_dir_rel);
+  EXPECT_FLOAT_EQ(12.5, msg->wind_speed_rel);
+  EXPECT_FLOAT_EQ(16.5, msg->wind_gust_speed);
+  EXPECT_EQ(250, msg->wind_gust_dir);
+  EXPECT_EQ(512, msg->air_temp_raw);
+  EXPECT_EQ(77, msg->humidity);
+  EXPECT_EQ(300, msg->water_temp_raw);
+  EXPECT_FLOAT_EQ(1307.3, msg->horz_viz);
+  EXPECT_EQ(61, msg->wx[0]);
+  EXPECT_EQ(6, msg->wx[1]);
+  EXPECT_EQ(7, msg->wx[2]);
+  EXPECT_EQ(80, msg->cloud_total);
+  EXPECT_EQ(5, msg->cloud_low);
+  EXPECT_EQ(31, msg->cloud_low_type);
+  EXPECT_EQ(32, msg->cloud_middle_type);
+  EXPECT_EQ(33, msg->cloud_high_type);
+  EXPECT_FLOAT_EQ(64.0, msg->alt_lowest_cloud_base);
+  EXPECT_EQ(7, msg->wave_period);
+  EXPECT_FLOAT_EQ(2.0, msg->wave_height);
+  EXPECT_EQ(270, msg->swell_dir);
+  EXPECT_EQ(9, msg->swell_period);
+  EXPECT_FLOAT_EQ(3.0, msg->swell_height);
+  EXPECT_EQ(180, msg->swell_dir_2);
+  EXPECT_EQ(11, msg->swell_period_2);
+  EXPECT_FLOAT_EQ(1.5, msg->swell_height_2);
+  EXPECT_FLOAT_EQ(0.12, msg->ice_thickness);
+  EXPECT_EQ(2, msg->ice_accretion);
+  EXPECT_EQ(1, msg->ice_accretion_cause);
+  EXPECT_EQ(5, msg->sea_ice_concentration);
+  EXPECT_EQ(3, msg->amt_type_ice);
+  EXPECT_EQ(4, msg->ice_situation);
+  EXPECT_EQ(6, msg->ice_devel);
+  EXPECT_EQ(90, msg->bearing_ice_edge);
+}
+
 }  // namespace
 }  // namespace libais
