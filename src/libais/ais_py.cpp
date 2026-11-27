@@ -2384,6 +2384,7 @@ ais8_367_33_append_pydict(const char *nmea_payload, PyObject *dict,
 
           PyList_SetItem(curr_list, idx, curr_dict);
         }
+        Py_DECREF(curr_list);
       }
       break;
     case AIS8_367_33_SENSOR_CURR_3D:
@@ -2425,6 +2426,7 @@ ais8_367_33_append_pydict(const char *nmea_payload, PyObject *dict,
             DictSafeSetItem(curr_dict, "depth", Py_None);
           }
         }
+        Py_DECREF(curr_list);
       }
       break;
     case AIS8_367_33_SENSOR_HORZ_FLOW:
@@ -2474,6 +2476,7 @@ ais8_367_33_append_pydict(const char *nmea_payload, PyObject *dict,
 
           PyList_SetItem(curr_list, idx, curr_dict);
         }
+        Py_DECREF(curr_list);
       }
       break;
     case AIS8_367_33_SENSOR_SEA_STATE:
@@ -2757,6 +2760,8 @@ ais8_367_33_append_pydict(const char *nmea_payload, PyObject *dict,
       {}  // TODO(schwehr): mark a bad sensor type or raise exception
     }
   }
+  Py_DECREF(rpt_list);
+
   return AIS_OK;
 }
 

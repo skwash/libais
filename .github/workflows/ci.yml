@@ -3,8 +3,8 @@ name: libais CI
 on:
   push:
     branches: [ main ]
+  # Run on pull requests to any branch, so that each PR in a stack is tested.
   pull_request:
-    branches: [ main ]
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
