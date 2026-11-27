@@ -75,6 +75,25 @@ class HandBuiltPayloadDecoders(unittest.TestCase):
     self.assertEqual(95, msg['heading'])
     self.assertEqual(90, msg['bearing_ice_edge'])
 
+  def testRisEta8_200_21(self):
+    # ES-RIS Edition 2023/1 Annex 11 Table 11-4.
+    msg = ais.decode('832S7Thj5@000005AHTG37;?@ht<g737W;FueeBL@0', 4)
+    self.assertEqual('LOCK1', msg['terminal'])
+    self.assertEqual(13, msg['eta_hour'])
+    self.assertEqual(45, msg['eta_minute'])
+    self.assertEqual(2, msg['tugboats'])
+    self.assertAlmostEqual(12.5, msg['air_draught'], places=5)
+    self.assertEqual(0, msg['spare2'])
+
+  def testRisRta8_200_22(self):
+    # ES-RIS Edition 2023/1 Annex 11 Table 11-8.
+    msg = ais.decode('801tPehj5P000005AHTG37;?@ht<g737W;Fuee@', 2)
+    self.assertEqual('LOCK1', msg['terminal'])
+    self.assertEqual(13, msg['rta_hour'])
+    self.assertEqual(45, msg['rta_minute'])
+    self.assertEqual(1, msg['lock_status'])
+    self.assertEqual(0, msg['spare2'])
+
 
 if __name__=='__main__':
   unittest.main()
