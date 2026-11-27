@@ -278,7 +278,57 @@ TEST(Ais6_1_5, Issue137_Part2) {
 // TODO(schwehr): Test Ais6_1_18.
 // TODO(schwehr): Test Ais6_1_20.
 // TODO(schwehr): Test Ais6_1_25.
-// TODO(schwehr): Test Ais6_1_32.
+void ValidateAis6_1_32_Window(const Ais6_1_32_Window &w, const double x,
+                              const double y, const int from_utc_hour,
+                              const int from_utc_min, const int to_utc_hour,
+                              const int to_utc_min, const int cur_dir,
+                              const float cur_speed) {
+  EXPECT_DOUBLE_EQ(x, w.position.lng_deg);
+  EXPECT_DOUBLE_EQ(y, w.position.lat_deg);
+  EXPECT_EQ(from_utc_hour, w.from_utc_hour);
+  EXPECT_EQ(from_utc_min, w.from_utc_min);
+  EXPECT_EQ(to_utc_hour, w.to_utc_hour);
+  EXPECT_EQ(to_utc_min, w.to_utc_min);
+  EXPECT_EQ(cur_dir, w.cur_dir);
+  EXPECT_FLOAT_EQ(cur_speed, w.cur_speed);
+}
+
+// IMO SN.1/Circ.289 Table 3.1: tidal window with three 88-bit windows.
+TEST(Ais6_1_32Test, ThreeWindows) {
+  // Built by hand.  Each field has a distinct value.  361 bits.
+  std::unique_ptr<Ais6_1_32> msg(new Ais6_1_32(
+      "65MGukQGGcuD062usw<M2K`t37`N5`kgrt`9hHtD:g9J1VwTMhW8pQjT;HLBP", 5));
+  ValidateAis6(msg.get(), 0, 366345678, 0, 366456789, true, 0, 1, 32);
+  EXPECT_EQ(11, msg->utc_month);
+  EXPECT_EQ(27, msg->utc_day);
+  ASSERT_EQ(3, msg->windows.size());
+  ValidateAis6_1_32_Window(msg->windows[0], -70.125, 42.5, 6, 15, 8, 30, 45,
+                           2.5);
+  ValidateAis6_1_32_Window(msg->windows[1], -70.25, 42.625, 10, 5, 11, 50, 180,
+                           1.2);
+  ValidateAis6_1_32_Window(msg->windows[2], -70.375, 42.75, 14, 20, 16, 45, 270,
+                           3.7);
+}
+
+TEST(Ais6_1_32Test, OneWindow) {
+  // Built by hand.  The first window of ThreeWindows only.  185 bits.
+  std::unique_ptr<Ais6_1_32> msg(
+      new Ais6_1_32("65MGukQGGcuD062usw<M2K`t37`N5`j", 1));
+  ValidateAis6(msg.get(), 0, 366345678, 0, 366456789, true, 0, 1, 32);
+  EXPECT_EQ(11, msg->utc_month);
+  EXPECT_EQ(27, msg->utc_day);
+  ASSERT_EQ(1, msg->windows.size());
+  ValidateAis6_1_32_Window(msg->windows[0], -70.125, 42.5, 6, 15, 8, 30, 45,
+                           2.5);
+}
+
+TEST(Ais6_1_32Test, BitCountNotWholeWindows) {
+  // Built by hand.  Window 2 has no To UTC fields.  350 bits.
+  std::unique_ptr<Ais6_1_32> msg(new Ais6_1_32(
+      "65MGukQGGcuD062usw<M2K`t37`N5`kgrt`9hHtD:e0kOj>pCTL@qB5d>9@", 4));
+  EXPECT_TRUE(msg->had_error());
+  EXPECT_EQ(AIS_ERR_BAD_BIT_COUNT, msg->get_error());
+}
 // TODO(schwehr): Test Ais6_1_40.
 
 }  // namespace

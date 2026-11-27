@@ -42,6 +42,8 @@ Ais8_200_10::Ais8_200_10(const char *nmea_payload, const size_t pad)
 }
 
 // ETA report
+// ES-RIS Edition 2023/1 Annex 11 Tables 11-1 and 11-4 define FI 21 as
+// addressed message 6. The offsets below follow its 88-bit header.
 Ais8_200_21::Ais8_200_21(const char *nmea_payload, const size_t pad)
     : Ais8(nmea_payload, pad), eta_month(0), eta_day(0), eta_hour(0),
       eta_minute(0), tugboats(0), air_draught(0.0) // TODO : add missing fields
@@ -77,13 +79,13 @@ Ais8_200_21::Ais8_200_21(const char *nmea_payload, const size_t pad)
   eta_month  = bits.ToUnsignedInt(208, 4);
   eta_day    = bits.ToUnsignedInt(212, 5);
   eta_hour   = bits.ToUnsignedInt(217, 5);
-  eta_minute = bits.ToUnsignedInt(223, 6);
+  eta_minute = bits.ToUnsignedInt(222, 6);
 
   // Number of assisting tugboats        3 bits
-  tugboats = bits.ToUnsignedInt(229, 3);
+  tugboats = bits.ToUnsignedInt(228, 3);
 
   // Maximum present static air draught 12 bits
-  air_draught = bits.ToUnsignedInt(231, 12) / 10.;  // m
+  air_draught = bits.ToUnsignedInt(231, 12) / 100.;  // m
 
   // Spare                               5 bits
   spare2 = bits.ToUnsignedInt(243, 5);
@@ -93,6 +95,8 @@ Ais8_200_21::Ais8_200_21(const char *nmea_payload, const size_t pad)
 }
 
 // RTA report
+// ES-RIS Edition 2023/1 Annex 11 Tables 11-1 and 11-8 define FI 22 as
+// addressed message 6. The offsets below follow its 88-bit header.
 Ais8_200_22::Ais8_200_22(const char *nmea_payload, const size_t pad)
     : Ais8(nmea_payload, pad), rta_month(0), rta_day(0), rta_hour(0),
       rta_minute(0) // TODO : add missing fields
@@ -128,13 +132,13 @@ Ais8_200_22::Ais8_200_22(const char *nmea_payload, const size_t pad)
   rta_month  = bits.ToUnsignedInt(208, 4);
   rta_day    = bits.ToUnsignedInt(212, 5);
   rta_hour   = bits.ToUnsignedInt(217, 5);
-  rta_minute = bits.ToUnsignedInt(223, 6);
+  rta_minute = bits.ToUnsignedInt(222, 6);
 
   // Lock/bridge/terminal status         2 bits
-  lock_status = bits.ToUnsignedInt(229, 2);
+  lock_status = bits.ToUnsignedInt(228, 2);
 
   // Spare                               2 bits
-  spare2 = bits.ToUnsignedInt(231, 2);
+  spare2 = bits.ToUnsignedInt(230, 2);
 
   assert(bits.GetRemaining() == 0);
   status = AIS_OK;

@@ -51,16 +51,15 @@ Ais8_1_0::Ais8_1_0(const char *nmea_payload, const size_t pad)
   ack_required = bits[56];
   msg_seq = bits.ToUnsignedInt(57, 11);
 
+  // ITU-R M.1371-4 Annex 5 Table 25, Note 1: a 6-bit spare decodes as '@'.
   const size_t text_size = 6 * ((num_bits - 68)/6);
-  // wrong?  needs to land on 8-bit boundary
   const size_t spare2_size = num_bits - 68 - text_size;
   text = bits.ToString(68, text_size);
 
-  // TODO(schwehr): Is this correct?
   if (!spare2_size)
     spare2 = 0;
   else
-    spare2 = bits.ToUnsignedInt(68, spare2_size);
+    spare2 = bits.ToUnsignedInt(68 + text_size, spare2_size);
 
   assert(bits.GetRemaining() == 0);
   status = AIS_OK;
@@ -250,7 +249,9 @@ Ais8_1_17::Ais8_1_17(const char *nmea_payload, const size_t pad)
   const size_t num_targets = (num_bits - 56) / 120;
   const size_t extra_bits = (num_bits - 56) % 120;
 
-  if (extra_bits || num_targets > 4) {
+  // IMO SN.1/Circ.289 Table 6.1: Target 1 is mandatory. Targets 2-4 are
+  // optional.
+  if (extra_bits || num_targets < 1 || num_targets > 4) {
     status = AIS_ERR_BAD_BIT_COUNT;
     return;
   }
@@ -270,6 +271,7 @@ Ais8_1_17::Ais8_1_17(const char *nmea_payload, const size_t pad)
     target.cog = bits.ToUnsignedInt(start + 97, 9);
     target.timestamp = bits.ToUnsignedInt(start + 106, 6);
     target.sog = bits.ToUnsignedInt(start + 112, 8);
+    targets.push_back(target);
   }
 
   assert(bits.GetRemaining() == 0);
@@ -372,15 +374,15 @@ Ais8_1_21::Ais8_1_21(const char *nmea_payload, const size_t pad)
     swell_period = bits.ToUnsignedInt(351, 6);  // s
     spare2 = bits.ToUnsignedInt(357, 3);
   } else {
-    // Type 1: WMO OBS from ship.
+    // Type 1: WMO OBS from ship.  IMO SN.1/Circ.289 Table 10.2.
     double const x = (bits.ToUnsignedInt(57, 16) / 100.0) - 180;
-    double const y = (bits.ToUnsignedInt(73, 15) / 100.0) - 180;
+    double const y = (bits.ToUnsignedInt(73, 15) / 100.0) - 90;
     position = AisPoint(x, y);
 
     utc_month = bits.ToUnsignedInt(88, 4);
     utc_day = bits.ToUnsignedInt(92, 6);
     utc_hour = bits.ToUnsignedInt(98, 5);
-    utc_min = bits.ToUnsignedInt(102, 3) * 10;
+    utc_min = bits.ToUnsignedInt(103, 3) * 10;
     cog = bits.ToUnsignedInt(106, 7) * 5;
     sog = bits.ToUnsignedInt(113, 5) * 0.5;
     heading = bits.ToUnsignedInt(118, 7) *5;  // Assume this is true degrees????

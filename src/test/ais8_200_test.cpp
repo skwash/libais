@@ -50,8 +50,58 @@ TEST(Ais8_200_10Test, DecodeAnything) {
                    0, 0, 0, 0, 0, 0);
 }
 
-// TODO(pyrog): Test messages for 8:200:21.
-// TODO(pyrog): Test messages for 8:200:22.
+// ES-RIS Edition 2023/1 Annex 11 Table 11-4: ETA at lock/bridge/terminal.
+TEST(Ais8_200_21Test, EtaReport) {
+  // Built by hand.  Each field has a distinct value.  Bits 56-87 are zero.
+  std::unique_ptr<Ais8_200_21> msg(
+      new Ais8_200_21("832S7Thj5@000005AHTG37;?@ht<g737W;FueeBL@0", 4));
+  ASSERT_NE(nullptr, msg);
+  EXPECT_FALSE(msg->had_error());
+
+  ASSERT_EQ(8, msg->message_id);
+  EXPECT_EQ(203999123, msg->mmsi);
+  EXPECT_EQ(200, msg->dac);
+  ASSERT_EQ(21, msg->fi);
+
+  EXPECT_EQ("AT", msg->country);
+  EXPECT_EQ("VIE", msg->location);
+  EXPECT_EQ("01234", msg->section);
+  EXPECT_EQ("LOCK1", msg->terminal);
+  EXPECT_EQ("01925", msg->hectometre);
+  EXPECT_EQ(11, msg->eta_month);
+  EXPECT_EQ(27, msg->eta_day);
+  EXPECT_EQ(13, msg->eta_hour);
+  EXPECT_EQ(45, msg->eta_minute);
+  EXPECT_EQ(2, msg->tugboats);
+  EXPECT_FLOAT_EQ(12.5, msg->air_draught);
+  EXPECT_EQ(0, msg->spare2);
+}
+
+// ES-RIS Edition 2023/1 Annex 11 Table 11-8: RTA at lock/bridge/terminal.
+TEST(Ais8_200_22Test, RtaReport) {
+  // Built by hand.  Each field has a distinct value.  Bits 56-87 are zero.
+  std::unique_ptr<Ais8_200_22> msg(
+      new Ais8_200_22("801tPehj5P000005AHTG37;?@ht<g737W;Fuee@", 2));
+  ASSERT_NE(nullptr, msg);
+  EXPECT_FALSE(msg->had_error());
+
+  ASSERT_EQ(8, msg->message_id);
+  EXPECT_EQ(2039991, msg->mmsi);
+  EXPECT_EQ(200, msg->dac);
+  ASSERT_EQ(22, msg->fi);
+
+  EXPECT_EQ("AT", msg->country);
+  EXPECT_EQ("VIE", msg->location);
+  EXPECT_EQ("01234", msg->section);
+  EXPECT_EQ("LOCK1", msg->terminal);
+  EXPECT_EQ("01925", msg->hectometre);
+  EXPECT_EQ(11, msg->rta_month);
+  EXPECT_EQ(27, msg->rta_day);
+  EXPECT_EQ(13, msg->rta_hour);
+  EXPECT_EQ(45, msg->rta_minute);
+  EXPECT_EQ(1, msg->lock_status);
+  EXPECT_EQ(0, msg->spare2);
+}
 
 void Validate8_200_24(const Ais8_200_24 &msg, const int repeat_indicator,
                       const int mmsi, const std::string country,
