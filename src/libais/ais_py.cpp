@@ -423,9 +423,9 @@ ais6_1_4_append_pydict(const char *nmea_payload, PyObject *dict,
   DictSafeSetItem(dict, "cap_reserved", res_list);
   Py_XDECREF(res_list);
   DictSafeSetItem(dict, "spare2", msg.spare2);
-  DictSafeSetItem(dict, "spare3", msg.spare2);
-  DictSafeSetItem(dict, "spare4", msg.spare2);
-  DictSafeSetItem(dict, "spare5", msg.spare2);
+  DictSafeSetItem(dict, "spare3", msg.spare3);
+  DictSafeSetItem(dict, "spare4", msg.spare4);
+  DictSafeSetItem(dict, "spare5", msg.spare5);
 
   return AIS_OK;
 }
@@ -442,11 +442,12 @@ ais6_1_5_append_pydict(const char *nmea_payload, PyObject *dict,
   }
 
   DictSafeSetItem(dict, "ack_dac", msg.ack_dac);
-  DictSafeSetItem(dict, "ack_fi", msg.ack_dac);
-  DictSafeSetItem(dict, "seq_num", msg.ack_dac);
-  DictSafeSetItem(dict, "ai_available", msg.ack_dac);
-  DictSafeSetItem(dict, "ai_response", msg.ack_dac);
-  DictSafeSetItem(dict, "spare", msg.ack_dac);
+  DictSafeSetItem(dict, "ack_fi", msg.ack_fi);
+  DictSafeSetItem(dict, "seq_num", msg.seq_num);
+  DictSafeSetItem(dict, "ai_available", msg.ai_available);
+  DictSafeSetItem(dict, "ai_response", msg.ai_response);
+  DictSafeSetItem(dict, "spare", msg.spare);
+  DictSafeSetItem(dict, "spare2", msg.spare2);
 
   return AIS_OK;
 }
@@ -746,23 +747,20 @@ ais6_to_pydict(const char *nmea_payload, const size_t pad) {
       status = ais6_1_40_append_pydict(nmea_payload, dict, pad);
       break;
     default:
-      // TODO(schwehr): Raise an exception?
-      DictSafeSetItem(dict, "not_parsed", true);
+      status = AIS_ERR_MSG_SUB_NOT_IMPLEMENTED;
     }
     break;
 
     default:
-      // TODO(schwehr): Raise an exception?
-      DictSafeSetItem(dict, "not_parsed", true);
+      status = AIS_ERR_MSG_SUB_NOT_IMPLEMENTED;
   }
 
   if (status != AIS_OK) {
     Py_XDECREF(dict);
-    PyErr_Format(ais_py_exception,
-                 "Ais6: DAC:FI not known.  6:%d:%d %s",
-                 msg.dac,
-                 msg.fi,
-                 AIS_STATUS_STRINGS[status]);
+    PyErr_Format(ais_py_exception, "Ais6: %s6:%d:%d %s",
+                 status == AIS_ERR_MSG_SUB_NOT_IMPLEMENTED ?
+                     "DAC:FI not known.  " : "",
+                 msg.dac, msg.fi, AIS_STATUS_STRINGS[status]);
     return nullptr;
   }
 
@@ -831,7 +829,7 @@ ais8_1_11_append_pydict(const char *nmea_payload, PyObject *dict,
   DictSafeSetItem(dict, "wind_ave", msg.wind_ave);
   DictSafeSetItem(dict, "wind_gust", msg.wind_gust);
   DictSafeSetItem(dict, "wind_dir", msg.wind_dir);
-  DictSafeSetItem(dict, "wind_gust_dir", msg.wind_gust);
+  DictSafeSetItem(dict, "wind_gust_dir", msg.wind_gust_dir);
 
   DictSafeSetItem(dict, "air_temp", msg.air_temp);
   DictSafeSetItem(dict, "rel_humid", msg.rel_humid);
@@ -869,7 +867,7 @@ ais8_1_11_append_pydict(const char *nmea_payload, PyObject *dict,
 
   // Or could be spare
   DictSafeSetItem(dict, "ext_water_level", msg.extended_water_level);
-  DictSafeSetItem(dict, "spare2", msg.extended_water_level);
+  DictSafeSetItem(dict, "spare2", msg.spare2);
 
   return AIS_OK;
 }
@@ -1105,7 +1103,7 @@ ais8_1_22_append_pydict(const char *nmea_payload, PyObject *dict,
   DictSafeSetItem(dict, "day", msg.day);
   DictSafeSetItem(dict, "hour", msg.hour);
   DictSafeSetItem(dict, "minute", msg.minute);
-  DictSafeSetItem(dict, "duration_minutes", msg.minute);
+  DictSafeSetItem(dict, "duration_minutes", msg.duration_minutes);
 
   PyObject *sub_area_list = PyList_New(msg.sub_areas.size());
 
@@ -1275,7 +1273,7 @@ ais8_1_24_append_pydict(const char *nmea_payload, PyObject *dict,
 
   PyObject *port_list = PyList_New(2);
   ListSafeSetItem(port_list, 0, PyUnicode_FromString(msg.next_ports[0].c_str()));
-  ListSafeSetItem(port_list, 1, PyUnicode_FromString(msg.next_ports[0].c_str()));
+  ListSafeSetItem(port_list, 1, PyUnicode_FromString(msg.next_ports[1].c_str()));
 
   PyObject *solas_list = PyList_New(26);
   for (size_t solas_num = 0; solas_num < 26; solas_num++) {
@@ -1339,13 +1337,15 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
     PyObject *rpt_dict = PyDict_New();
     ListSafeSetItem(rpt_list, rpt_num, rpt_dict);
 
+    ais8_1_26_append_pydict_sensor_hdr(rpt_dict, msg.reports[rpt_num]);
+
     switch (msg.reports[rpt_num]->report_type) {
       // case AIS8_1_26_SENSOR_ERROR:
     case AIS8_1_26_SENSOR_LOCATION:
       {
         Ais8_1_26_Location *rpt =
-            reinterpret_cast<Ais8_1_26_Location *>(msg.reports[rpt_num]);
-        ais8_1_26_append_pydict_sensor_hdr(rpt_dict, rpt);
+            dynamic_cast<Ais8_1_26_Location *>(msg.reports[rpt_num]);
+        assert(rpt != nullptr);
         DictSafeSetItem(rpt_dict, "x", "y", rpt->position);
         DictSafeSetItem(rpt_dict, "z", rpt->z);
         DictSafeSetItem(rpt_dict, "owner", rpt->owner);
@@ -1356,7 +1356,8 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
     case AIS8_1_26_SENSOR_STATION:
       {
         Ais8_1_26_Station *rpt =
-            reinterpret_cast<Ais8_1_26_Station *>(msg.reports[rpt_num]);
+            dynamic_cast<Ais8_1_26_Station *>(msg.reports[rpt_num]);
+        assert(rpt != nullptr);
         DictSafeSetItem(rpt_dict, "name", rpt->name);
         DictSafeSetItem(rpt_dict, "spare", rpt->spare);
       }
@@ -1364,7 +1365,8 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
     case AIS8_1_26_SENSOR_WIND:
       {
         Ais8_1_26_Wind *rpt =
-            reinterpret_cast<Ais8_1_26_Wind *>(msg.reports[rpt_num]);
+            dynamic_cast<Ais8_1_26_Wind *>(msg.reports[rpt_num]);
+        assert(rpt != nullptr);
         DictSafeSetItem(rpt_dict, "wind_speed", rpt->wind_speed);
         DictSafeSetItem(rpt_dict, "wind_gust", rpt->wind_gust);
         DictSafeSetItem(rpt_dict, "wind_dir", rpt->wind_dir);
@@ -1384,7 +1386,8 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
     case AIS8_1_26_SENSOR_WATER_LEVEL:
       {
         Ais8_1_26_WaterLevel *rpt =
-            reinterpret_cast<Ais8_1_26_WaterLevel *>(msg.reports[rpt_num]);
+            dynamic_cast<Ais8_1_26_WaterLevel *>(msg.reports[rpt_num]);
+        assert(rpt != nullptr);
         DictSafeSetItem(rpt_dict, "type", rpt->type);
         DictSafeSetItem(rpt_dict, "level", rpt->level);
         DictSafeSetItem(rpt_dict, "trend", rpt->trend);
@@ -1402,7 +1405,8 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
     case AIS8_1_26_SENSOR_CURR_2D:
       {
         Ais8_1_26_Curr2D *rpt =
-            reinterpret_cast<Ais8_1_26_Curr2D *>(msg.reports[rpt_num]);
+            dynamic_cast<Ais8_1_26_Curr2D *>(msg.reports[rpt_num]);
+        assert(rpt != nullptr);
         DictSafeSetItem(rpt_dict, "type", rpt->type);
         DictSafeSetItem(rpt_dict, "spare", rpt->spare);
 
@@ -1421,7 +1425,8 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
     case AIS8_1_26_SENSOR_CURR_3D:
       {
         Ais8_1_26_Curr3D *rpt =
-            reinterpret_cast<Ais8_1_26_Curr3D *>(msg.reports[rpt_num]);
+            dynamic_cast<Ais8_1_26_Curr3D *>(msg.reports[rpt_num]);
+        assert(rpt != nullptr);
         DictSafeSetItem(rpt_dict, "type", rpt->type);
         DictSafeSetItem(rpt_dict, "spare", rpt->spare);
 
@@ -1442,7 +1447,8 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
     case AIS8_1_26_SENSOR_HORZ_FLOW:
       {
         Ais8_1_26_HorzFlow *rpt =
-            reinterpret_cast<Ais8_1_26_HorzFlow *>(msg.reports[rpt_num]);
+            dynamic_cast<Ais8_1_26_HorzFlow *>(msg.reports[rpt_num]);
+        assert(rpt != nullptr);
         DictSafeSetItem(rpt_dict, "spare", rpt->spare);
 
         PyObject *curr_list = PyList_New(2);
@@ -1462,7 +1468,8 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
     case AIS8_1_26_SENSOR_SEA_STATE:
       {
         Ais8_1_26_SeaState *rpt =
-            reinterpret_cast<Ais8_1_26_SeaState *>(msg.reports[rpt_num]);
+            dynamic_cast<Ais8_1_26_SeaState *>(msg.reports[rpt_num]);
+        assert(rpt != nullptr);
         DictSafeSetItem(rpt_dict, "swell_height", rpt->swell_height);
         DictSafeSetItem(rpt_dict, "swell_period", rpt->swell_period);
         DictSafeSetItem(rpt_dict, "swell_dir", rpt->swell_dir);
@@ -1481,7 +1488,8 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
     case AIS8_1_26_SENSOR_SALINITY:
       {
         Ais8_1_26_Salinity *rpt =
-            reinterpret_cast<Ais8_1_26_Salinity *>(msg.reports[rpt_num]);
+            dynamic_cast<Ais8_1_26_Salinity *>(msg.reports[rpt_num]);
+        assert(rpt != nullptr);
         DictSafeSetItem(rpt_dict, "water_temp", rpt->water_temp);
         DictSafeSetItem(rpt_dict, "conductivity", rpt->conductivity);
         DictSafeSetItem(rpt_dict, "pressure", rpt->pressure);
@@ -1495,7 +1503,8 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
     case AIS8_1_26_SENSOR_WX:
       {
         Ais8_1_26_Wx *rpt =
-            reinterpret_cast<Ais8_1_26_Wx *>(msg.reports[rpt_num]);
+            dynamic_cast<Ais8_1_26_Wx *>(msg.reports[rpt_num]);
+        assert(rpt != nullptr);
         DictSafeSetItem(rpt_dict, "air_temp", rpt->air_temp);
         DictSafeSetItem(rpt_dict, "air_temp_sensor_type",
                         rpt->air_temp_sensor_type);
@@ -1514,13 +1523,13 @@ ais8_1_26_append_pydict(const char *nmea_payload, PyObject *dict,
     case AIS8_1_26_SENSOR_AIR_DRAUGHT:
       {
         Ais8_1_26_AirDraught *rpt =
-            reinterpret_cast<Ais8_1_26_AirDraught *>(msg.reports[rpt_num]);
+            dynamic_cast<Ais8_1_26_AirDraught *>(msg.reports[rpt_num]);
+        assert(rpt != nullptr);
         DictSafeSetItem(rpt_dict, "draught", rpt->draught);
         DictSafeSetItem(rpt_dict, "gap", rpt->gap);
         DictSafeSetItem(rpt_dict, "forecast_gap", rpt->forecast_gap);
-        DictSafeSetItem(rpt_dict, "int trend", rpt->trend);
-        DictSafeSetItem(
-            rpt_dict, "int utc_day_forecast", rpt->utc_day_forecast);
+        DictSafeSetItem(rpt_dict, "trend", rpt->trend);
+        DictSafeSetItem(rpt_dict, "utc_day_forecast", rpt->utc_day_forecast);
         DictSafeSetItem(rpt_dict, "utc_hour_forecast", rpt->utc_hour_forecast);
         DictSafeSetItem(rpt_dict, "utc_min_forecast", rpt->utc_min_forecast);
         DictSafeSetItem(rpt_dict, "spare", rpt->spare);
@@ -1862,10 +1871,16 @@ ais8_200_55_append_pydict(const char *nmea_payload, PyObject *dict,
   return AIS_OK;
 }
 
-void
+AIS_STATUS
 ais8_367_22_append_pydict(const char *nmea_payload, PyObject *dict,
                           const size_t pad) {
-  Ais8_367_22 msg(nmea_payload, pad);  // TODO(schwehr): check for errors
+  assert(nmea_payload);
+  assert(dict);
+  assert(pad < 6);
+  Ais8_367_22 msg(nmea_payload, pad);
+  if (msg.had_error()) {
+    return msg.get_error();
+  }
 
   DictSafeSetItem(dict, "version", msg.version);
   DictSafeSetItem(dict, "link_id", msg.link_id);
@@ -1879,7 +1894,7 @@ ais8_367_22_append_pydict(const char *nmea_payload, PyObject *dict,
   DictSafeSetItem(dict, "hour", msg.hour);
   DictSafeSetItem(dict, "minute", msg.minute);
 
-  DictSafeSetItem(dict, "durations_minutes", msg.duration_minutes);
+  DictSafeSetItem(dict, "duration_minutes", msg.duration_minutes);
 
   PyObject *sub_area_list = PyList_New(msg.sub_areas.size());
 
@@ -1998,6 +2013,8 @@ ais8_367_22_append_pydict(const char *nmea_payload, PyObject *dict,
   }
   DictSafeSetItem(dict, "sub_areas", sub_area_list);
   Py_XDECREF(sub_area_list);
+
+  return AIS_OK;
 }
 
 AIS_STATUS
@@ -2810,7 +2827,6 @@ ais8_to_pydict(const char *nmea_payload, const size_t pad) {
     case AIS_FI_8_1_19_TRAFFIC_SIGNAL:
       // TODO(schwehr): Untested. No messages found.
       status = ais8_1_19_append_pydict(nmea_payload, dict, pad);
-      DictSafeSetItem(dict, "parsed", true);
       break;
       // 20:  Berthing data.
     case AIS_FI_8_1_21_WEATHER_OBS:
@@ -2837,7 +2853,7 @@ ais8_to_pydict(const char *nmea_payload, const size_t pad) {
       break;
       // ITU 1371-1 only: 3.10 - IFM 40: Number of persons on board.
     default:
-      DictSafeSetItem(dict, "parsed", false);
+      status = AIS_ERR_MSG_SUB_NOT_IMPLEMENTED;
       break;
     }
     break;
@@ -2865,7 +2881,7 @@ ais8_to_pydict(const char *nmea_payload, const size_t pad) {
       status = ais8_200_55_append_pydict(nmea_payload, dict, pad);
       break;
     default:
-      DictSafeSetItem(dict, "parsed", false);
+      status = AIS_ERR_MSG_SUB_NOT_IMPLEMENTED;
       break;
     }
     break;
@@ -2873,7 +2889,7 @@ ais8_to_pydict(const char *nmea_payload, const size_t pad) {
   case 367:  // United states.
     switch (msg.fi) {
     case 22:  // USCG Area Notice 2012 (v5?).
-      ais8_367_22_append_pydict(nmea_payload, dict, pad);
+      status = ais8_367_22_append_pydict(nmea_payload, dict, pad);
       break;
     case AIS_FI_8_367_23_SSW:
       status = ais8_367_23_append_pydict(nmea_payload, dict, pad);
@@ -2888,19 +2904,20 @@ ais8_to_pydict(const char *nmea_payload, const size_t pad) {
       status = ais8_367_33_append_pydict(nmea_payload, dict, pad);
       break;
     default:
-      DictSafeSetItem(dict, "parsed", false);
+      status = AIS_ERR_MSG_SUB_NOT_IMPLEMENTED;
       break;
     }
     break;
   default:
-    DictSafeSetItem(dict, "parsed", false);
-    // TODO(schwehr): raise exception or return standin?
+    status = AIS_ERR_MSG_SUB_NOT_IMPLEMENTED;
   }
 
   if (status != AIS_OK) {
     Py_XDECREF(dict);
-    PyErr_Format(ais_py_exception, "Ais8: %s",
-                 AIS_STATUS_STRINGS[status]);
+    PyErr_Format(ais_py_exception, "Ais8: %s8:%d:%d %s",
+                 status == AIS_ERR_MSG_SUB_NOT_IMPLEMENTED ?
+                     "DAC:FI not known.  " : "",
+                 msg.dac, msg.fi, AIS_STATUS_STRINGS[status]);
     return nullptr;
   }
 

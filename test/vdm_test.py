@@ -342,7 +342,7 @@ class BareQueueTest(unittest.TestCase):
             'md5': 'f463fcabb7540e412af5d7238f955b0e',
             'dac': 1,
             'day': 1,
-            'duration_minutes': 1,
+            'duration_minutes': 60,
             'fi': 22,
             'hour': 0,
             'id': 8,
